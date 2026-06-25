@@ -478,8 +478,6 @@ export class Database {
     if (!firestoreDb || this.listenersInitialized) return;
     this.listenersInitialized = true;
 
-    console.log("Initializing real-time Firebase Cloud Firestore synchronization listeners...");
-
     const collectionsToSync = [
       "users",
       "exams",
@@ -489,6 +487,24 @@ export class Database {
       "results",
       "monitoringLogs"
     ];
+
+    if (IS_VERCEL) {
+      console.log("[FirebaseSync] Serverless/Vercel environment detected. Performing a fast, stateless one-time parallel synchronization...");
+      const syncPromises = collectionsToSync.map(async (colName) => {
+        try {
+          await this.forceSyncCollection(colName);
+        } catch (err) {
+          console.error(`[FirebaseSync] Stateless initial fetch failed for "${colName}":`, err);
+        }
+      });
+      this.initialSyncPromise = Promise.all(syncPromises)
+        .then(() => {
+          console.log("[FirebaseSync] Serverless database sync from Firestore completed successfully.");
+        });
+      return;
+    }
+
+    console.log("Initializing real-time Firebase Cloud Firestore synchronization listeners...");
 
     const syncPromises = collectionsToSync.map((colName) => {
       return new Promise<void>((resolve) => {
