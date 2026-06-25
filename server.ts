@@ -5,6 +5,16 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Database, User } from "./server-db";
 
+// Global process-level error handlers to prevent unhandled promise rejections or exceptions
+// from terminating the Node serverless process on Vercel/Render.
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[CRITICAL] Unhandled Rejection at promise:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[CRITICAL] Uncaught Exception thrown:", error);
+});
+
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-exam-key-998811";
 
 declare global {
@@ -74,105 +84,119 @@ function startServer() {
   // ==========================================
 
   app.post("/api/auth/login", async (req: Request, res: Response) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required" });
-    }
-    const user = Database.getUserByEmail(email);
-    if (!user) {
-      return res.status(401).json({ error: "User account with this email does not exist." });
-    }
-    
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
-    if (!isMatch) {
-      return res.status(401).json({ error: "Incorrect password. Please verify and try again." });
-    }
-
-    // Dynamic Firebase Authentication lookup and creation
     try {
-      const auth = Database.getFirebaseAuth();
-      if (auth) {
-        const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import("firebase/auth");
-        try {
-          await signInWithEmailAndPassword(auth, email, password);
-          console.log(`[Firebase Auth] Successfully verified password for email: ${email}`);
-        } catch (authErr: any) {
-          // Auto-migrate if user exists in database but not yet in Firebase Auth
-          if (authErr.code === "auth/user-not-found" || authErr.code === "auth/invalid-credential") {
-            try {
-              await createUserWithEmailAndPassword(auth, email, password);
-              console.log(`[Firebase Auth] Migrated/Created user account successfully in Firebase Auth for: ${email}`);
-            } catch (createErr: any) {
-              console.warn(`[Firebase Auth Migration Warning] Could not migrate user: ${createErr.message}`);
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
+      const user = Database.getUserByEmail(email);
+      if (!user) {
+        return res.status(401).json({ error: "User account with this email does not exist." });
+      }
+      
+      if (!user.passwordHash) {
+        return res.status(401).json({ error: "User account does not have local credentials configured. Please contact support or register again." });
+      }
+
+      const isMatch = await bcrypt.compare(password, user.passwordHash);
+      if (!isMatch) {
+        return res.status(401).json({ error: "Incorrect password. Please verify and try again." });
+      }
+
+      // Dynamic Firebase Authentication lookup and creation (completely optional / non-blocking)
+      try {
+        const auth = Database.getFirebaseAuth();
+        if (auth) {
+          const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import("firebase/auth");
+          try {
+            await signInWithEmailAndPassword(auth, email, password);
+            console.log(`[Firebase Auth] Successfully verified password for email: ${email}`);
+          } catch (authErr: any) {
+            // Auto-migrate if user exists in database but not yet in Firebase Auth
+            if (authErr.code === "auth/user-not-found" || authErr.code === "auth/invalid-credential") {
+              try {
+                await createUserWithEmailAndPassword(auth, email, password);
+                console.log(`[Firebase Auth] Migrated/Created user account successfully in Firebase Auth for: ${email}`);
+              } catch (createErr: any) {
+                console.warn(`[Firebase Auth Migration Warning] Could not migrate user: ${createErr.message}`);
+              }
+            } else {
+              console.warn(`[Firebase Auth Warning] Authentication system rejected email:`, authErr.message);
             }
-          } else {
-            console.warn(`[Firebase Auth Warning] Authentication system rejected email:`, authErr.message);
           }
         }
+      } catch (err) {
+        console.error("[Firebase Auth Fatal] verification engine error:", err);
       }
-    } catch (err) {
-      console.error("[Firebase Auth Fatal] verification engine error:", err);
+
+      const token = jwt.sign(
+        { id: user.id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: "24h" }
+      );
+
+      res.json({
+        message: "Login successful",
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          coins: user.coins
+        }
+      });
+    } catch (globalErr: any) {
+      console.error("[Login API Fatal Error]:", globalErr);
+      res.status(500).json({ error: "A server error occurred during login: " + (globalErr.message || "Unknown error") });
     }
-
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
-      JWT_SECRET,
-      { expiresIn: "24h" }
-    );
-
-    res.json({
-      message: "Login successful",
-      token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        coins: user.coins
-      }
-    });
   });
 
   app.post("/api/auth/register", async (req: Request, res: Response) => {
-    const { name, email, password, role } = req.body;
-    if (!name || !email || !password || !role) {
-      return res.status(400).json({ error: "All registration fields are required" });
-    }
-    
-    // Validate role constraint
-    if (role !== "student" && role !== "teacher") {
-      return res.status(400).json({ error: "Role must be 'student' or 'teacher'" });
-    }
-
-    const existing = Database.getUserByEmail(email);
-    if (existing) {
-      return res.status(400).json({ error: "Email already registered in the system" });
-    }
-
-    // Try building user credential first on Firebase Auth
     try {
-      const auth = Database.getFirebaseAuth();
-      if (auth) {
-        const { createUserWithEmailAndPassword } = await import("firebase/auth");
-        await createUserWithEmailAndPassword(auth, email, password);
-        console.log(`[Firebase Auth] User Registered successfully in Firebase Auth: ${email}`);
+      const { name, email, password, role } = req.body;
+      if (!name || !email || !password || !role) {
+        return res.status(400).json({ error: "All registration fields are required" });
       }
-    } catch (authError: any) {
-      console.error(`[Firebase Auth Registration Error]:`, authError);
-      return res.status(400).json({ error: authError.message || "Failed to register credentials in Firebase Auth." });
-    }
+      
+      // Validate role constraint
+      if (role !== "student" && role !== "teacher") {
+        return res.status(400).json({ error: "Role must be 'student' or 'teacher'" });
+      }
 
-    const newUser = Database.createUser(name, email, password, role);
-    res.status(201).json({
-      message: "User registered successfully",
-      user: {
-        id: newUser.id,
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role,
-        coins: newUser.coins
+      const existing = Database.getUserByEmail(email);
+      if (existing) {
+        return res.status(400).json({ error: "Email already registered in the system" });
       }
-    });
+
+      // Try building user credential first on Firebase Auth
+      try {
+        const auth = Database.getFirebaseAuth();
+        if (auth) {
+          const { createUserWithEmailAndPassword } = await import("firebase/auth");
+          await createUserWithEmailAndPassword(auth, email, password);
+          console.log(`[Firebase Auth] User Registered successfully in Firebase Auth: ${email}`);
+        }
+      } catch (authError: any) {
+        console.error(`[Firebase Auth Registration Error]:`, authError);
+        return res.status(400).json({ error: authError.message || "Failed to register credentials in Firebase Auth." });
+      }
+
+      const newUser = Database.createUser(name, email, password, role);
+      res.status(201).json({
+        message: "User registered successfully",
+        user: {
+          id: newUser.id,
+          name: newUser.name,
+          email: newUser.email,
+          role: newUser.role,
+          coins: newUser.coins
+        }
+      });
+    } catch (globalErr: any) {
+      console.error("[Register API Fatal Error]:", globalErr);
+      res.status(500).json({ error: "A server error occurred during registration: " + (globalErr.message || "Unknown error") });
+    }
   });
 
   // Current session validity checker
