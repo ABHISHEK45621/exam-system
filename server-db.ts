@@ -2,7 +2,10 @@ import fs from "fs";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, setLogLevel, getDocs } from "firebase/firestore";
+import * as standardFirestore from "firebase/firestore";
+import * as liteFirestore from "firebase/firestore/lite";
+const IS_VERCEL = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const fstore = (IS_VERCEL ? liteFirestore : standardFirestore) as any;
 import { getAuth } from "firebase/auth";
 import { GoogleGenAI, Type } from "@google/genai";
 
@@ -28,7 +31,7 @@ function getGeminiClient(): GoogleGenAI {
 
 // Suppress benign internal gRPC/Firestore idle stream timeout warns from cluttering logs
 try {
-  setLogLevel("error");
+  standardFirestore.setLogLevel("error");
 } catch (e) {
   // safe fallback
 }
@@ -47,7 +50,7 @@ if (fs.existsSync(CONFIG_FILE)) {
     firebaseConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
     fbApp = initializeApp(firebaseConfig);
     const dbId = firebaseConfig.firestoreDatabaseId;
-    firestoreDb = dbId ? getFirestore(fbApp, dbId) : getFirestore(fbApp);
+    firestoreDb = dbId ? fstore.getFirestore(fbApp, dbId) : fstore.getFirestore(fbApp);
     firebaseAuth = getAuth(fbApp);
     console.log("Firebase initialized successfully on server-side with project ID:", firebaseConfig.projectId, "and DB ID:", dbId || "default");
   } catch (error) {
@@ -191,7 +194,8 @@ export interface DBStructure {
   monitoringLogs: MonitoringLog[];
 }
 
-const IS_VERCEL = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+// Already defined at top
+
 const DB_FILE = IS_VERCEL
   ? path.join("/tmp", "db.json")
   : path.join(process.cwd(), "db.json");
@@ -508,7 +512,7 @@ export class Database {
 
     const syncPromises = collectionsToSync.map((colName) => {
       return new Promise<void>((resolve) => {
-        const colRef = collection(firestoreDb, colName);
+        const colRef = fstore.collection(firestoreDb, colName);
         let firstResolveHappened = false;
 
         const maybeResolve = () => {
@@ -518,7 +522,7 @@ export class Database {
           }
         };
 
-        onSnapshot(colRef, { includeMetadataChanges: true }, (snapshot) => {
+        standardFirestore.onSnapshot(colRef, { includeMetadataChanges: true }, (snapshot: any) => {
           const items: any[] = [];
           const currentIds = new Set<string>();
 
@@ -557,7 +561,7 @@ export class Database {
                 localItems.forEach((item: any) => {
                   const docId = item.id;
                   if (docId) {
-                    setDoc(doc(firestoreDb, colName, docId), cleanUndefined(item))
+                    fstore.setDoc(fstore.doc(firestoreDb, colName, docId), cleanUndefined(item))
                       .then(() => {
                         completedCount++;
                         if (completedCount === localItems.length) {
@@ -687,8 +691,8 @@ export class Database {
   public static async forceSyncCollection(colName: string): Promise<void> {
     if (!firestoreDb) return;
     try {
-      const colRef = collection(firestoreDb, colName);
-      const snapshot = await getDocs(colRef);
+      const colRef = fstore.collection(firestoreDb, colName);
+      const snapshot = await fstore.getDocs(colRef);
       const items: any[] = [];
       const currentIds = new Set<string>();
       
@@ -770,8 +774,8 @@ export class Database {
           continue;
         }
         try {
-          const colRef = collection(firestoreDb, colName);
-          const snapshot = await getDocs(colRef);
+          const colRef = fstore.collection(firestoreDb, colName);
+          const snapshot = await fstore.getDocs(colRef);
           
           const items: any[] = [];
           const currentIds = new Set<string>();
@@ -963,7 +967,7 @@ export class Database {
 
         // Directly write it to Firestore if possible to prevent delay-overwrite by snapshot listeners
         if (firestoreDb) {
-          setDoc(doc(firestoreDb, "users", adminUser.id), cleanUndefined(adminUser)).catch((err) => {
+          fstore.setDoc(fstore.doc(firestoreDb, "users", adminUser.id), cleanUndefined(adminUser)).catch((err) => {
             console.error("[Database load] Failed to sync new secure admin to Firestore:", err);
           });
         }
@@ -1024,7 +1028,7 @@ export class Database {
       const items = Array.isArray(itemsToSync) ? itemsToSync : [itemsToSync];
       items.forEach((item: any) => {
         if (item && item.id) {
-          setDoc(doc(firestoreDb, collectionName, item.id), cleanUndefined(item)).catch((err) => {
+          fstore.setDoc(fstore.doc(firestoreDb, collectionName, item.id), cleanUndefined(item)).catch((err) => {
             console.error(`[FirebaseSync] Failed to set document ${collectionName}/${item.id}:`, err);
           });
         }
@@ -1119,7 +1123,7 @@ export class Database {
       
       // Explicitly delete from Firestore to avoid accidental resurrects or deletions
       if (firestoreDb) {
-        deleteDoc(doc(firestoreDb, "users", id)).catch((err) => {
+        fstore.deleteDoc(fstore.doc(firestoreDb, "users", id)).catch((err) => {
           console.error(`[FirebaseSync] Failed to delete user ${id} from Firestore:`, err);
         });
       }
@@ -1188,7 +1192,7 @@ export class Database {
     // Explicitly update Firestore with isDeleted: true
     if (firestoreDb) {
       console.log(`[Database.deleteExam] Syncing soft deletion on Firestore for exam: ${id}`);
-      setDoc(doc(firestoreDb, "exams", id), cleanUndefined(db.exams[idx])).catch((err) => {
+      fstore.setDoc(fstore.doc(firestoreDb, "exams", id), cleanUndefined(db.exams[idx])).catch((err) => {
         console.error(`[Database.deleteExam] Error updating Firestore soft-deleted exam "${id}":`, err);
       });
     }
@@ -1262,7 +1266,7 @@ export class Database {
 
     // Explicitly delete from Firestore
     if (firestoreDb) {
-      deleteDoc(doc(firestoreDb, "questions", id)).catch((err) => {
+      fstore.deleteDoc(fstore.doc(firestoreDb, "questions", id)).catch((err) => {
         console.error(`[FirebaseSync] Failed to delete question ${id} from Firestore:`, err);
       });
     }
@@ -1321,8 +1325,8 @@ export class Database {
 
       this.save(db, "examSessions");
       if (firestoreDb) {
-        setDoc(doc(firestoreDb, "examSessions", session.id), cleanUndefined(session)).catch(() => {});
-        setDoc(doc(firestoreDb, "monitoringLogs", startLog.id), cleanUndefined(startLog)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "examSessions", session.id), cleanUndefined(session)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "monitoringLogs", startLog.id), cleanUndefined(startLog)).catch(() => {});
       }
     }
     return session;
@@ -1668,18 +1672,18 @@ Returned output must be a root JSON object containing a structured array with th
     this.save(db, "examSessions");
 
     if (firestoreDb) {
-      setDoc(doc(firestoreDb, "examSessions", session.id), cleanUndefined(session)).catch(() => {});
-      setDoc(doc(firestoreDb, "results", newResult.id), cleanUndefined(newResult)).catch(() => {});
-      setDoc(doc(firestoreDb, "monitoringLogs", finalLog.id), cleanUndefined(finalLog)).catch(() => {});
+      fstore.setDoc(fstore.doc(firestoreDb, "examSessions", session.id), cleanUndefined(session)).catch(() => {});
+      fstore.setDoc(fstore.doc(firestoreDb, "results", newResult.id), cleanUndefined(newResult)).catch(() => {});
+      fstore.setDoc(fstore.doc(firestoreDb, "monitoringLogs", finalLog.id), cleanUndefined(finalLog)).catch(() => {});
       
       const sessAnswers = db.studentAnswers.filter((a) => a.sessionId === session.id);
       for (const ans of sessAnswers) {
-        setDoc(doc(firestoreDb, "studentAnswers", ans.id), cleanUndefined(ans)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "studentAnswers", ans.id), cleanUndefined(ans)).catch(() => {});
       }
 
       const user = db.users.find((u) => u.id === studentId);
       if (user) {
-        setDoc(doc(firestoreDb, "users", user.id), cleanUndefined(user)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "users", user.id), cleanUndefined(user)).catch(() => {});
       }
     }
 
@@ -1848,19 +1852,19 @@ Returned output must be a root JSON object containing a structured array with th
     this.save(db, "examSessions");
 
     if (firestoreDb) {
-      setDoc(doc(firestoreDb, "examSessions", session.id), cleanUndefined(session)).catch(() => {});
-      setDoc(doc(firestoreDb, "results", newResult.id), cleanUndefined(newResult)).catch(() => {});
-      setDoc(doc(firestoreDb, "monitoringLogs", finalLog.id), cleanUndefined(finalLog)).catch(() => {});
+      fstore.setDoc(fstore.doc(firestoreDb, "examSessions", session.id), cleanUndefined(session)).catch(() => {});
+      fstore.setDoc(fstore.doc(firestoreDb, "results", newResult.id), cleanUndefined(newResult)).catch(() => {});
+      fstore.setDoc(fstore.doc(firestoreDb, "monitoringLogs", finalLog.id), cleanUndefined(finalLog)).catch(() => {});
       
       // Update student updated scores
       const sessAnswers = db.studentAnswers.filter((a) => a.sessionId === session.id);
       for (const ans of sessAnswers) {
-        setDoc(doc(firestoreDb, "studentAnswers", ans.id), cleanUndefined(ans)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "studentAnswers", ans.id), cleanUndefined(ans)).catch(() => {});
       }
 
       const user = db.users.find((u) => u.id === studentId);
       if (user) {
-        setDoc(doc(firestoreDb, "users", user.id), cleanUndefined(user)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "users", user.id), cleanUndefined(user)).catch(() => {});
       }
     }
     return newResult;
@@ -2060,8 +2064,8 @@ Returned output must be a root JSON object containing a structured array with th
       
       // Clean Sync if active
       if (firestoreDb) {
-        setDoc(doc(firestoreDb, "results", result.id), cleanUndefined(result)).catch(() => {});
-        setDoc(doc(firestoreDb, "users", student.id), cleanUndefined(student)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "results", result.id), cleanUndefined(result)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "users", student.id), cleanUndefined(student)).catch(() => {});
       }
       
       // Notify custom local observers
@@ -2096,8 +2100,8 @@ Returned output must be a root JSON object containing a structured array with th
       this.save(db, "users", student);
 
       if (firestoreDb) {
-        setDoc(doc(firestoreDb, "results", newResult.id), cleanUndefined(newResult)).catch(() => {});
-        setDoc(doc(firestoreDb, "users", student.id), cleanUndefined(student)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "results", newResult.id), cleanUndefined(newResult)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "users", student.id), cleanUndefined(student)).catch(() => {});
       }
 
       this.notifyDbChanged("results");
@@ -2158,7 +2162,7 @@ Returned output must be a root JSON object containing a structured array with th
       this.save(db, "examSessions");
 
       if (firestoreDb) {
-        setDoc(doc(firestoreDb, "examSessions", session.id), cleanUndefined(session)).catch(() => {});
+        fstore.setDoc(fstore.doc(firestoreDb, "examSessions", session.id), cleanUndefined(session)).catch(() => {});
       }
       this.notifyDbChanged("examSessions");
     }
