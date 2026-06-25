@@ -3,6 +3,15 @@
   publish = "dist"
   command = "npm run build"
 
+# OPTIONAL PROXING: If you want Netlify to proxy all "/api/*" requests directly
+# to your backend (e.g., your Vercel deployment), uncomment the lines below and 
+# replace the URL with your actual deployed Vercel backend URL:
+# [[redirects]]
+#   from = "/api/*"
+#   to = "https://exam-system-nu-nine.vercel.app/api/:splat"
+#   status = 200
+#   force = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

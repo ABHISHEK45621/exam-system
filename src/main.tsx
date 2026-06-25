@@ -4,7 +4,7 @@ import App from './App.tsx';
 import './index.css';
 
 // Intercept all API requests to route them to VITE_API_URL if configured (e.g. for Netlify deployments)
-const apiBaseUrl = (import.meta as any).env.VITE_API_URL;
+const apiBaseUrl = (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL;
 if (apiBaseUrl) {
   const originalFetch = window.fetch;
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
