@@ -1,0 +1,6 @@
+{
+  "name": "Advanced Online Examination System",
+  "description": "A professional commercial-grade examination platform with live monitoring, automated autosave, session recovery, cheating detection, and an intelligent answer grading engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

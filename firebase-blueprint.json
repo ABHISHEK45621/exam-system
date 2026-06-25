@@ -1,0 +1,153 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Represents a student or teacher profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["teacher", "student", "admin"] },
+        "coins": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "passwordHash": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "role", "coins", "createdAt"]
+    },
+    "Exam": {
+      "title": "Exam",
+      "description": "Represents an assessment exam template created by teachers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "description": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "isPublished": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "subject", "durationMinutes", "isPublished", "createdAt"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "A single question belonging to an Exam",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "examId": { "type": "string" },
+        "type": { "type": "string", "enum": ["MCQ", "SHORT", "LONG"] },
+        "questionText": { "type": "string" },
+        "optionA": { "type": "string" },
+        "optionB": { "type": "string" },
+        "optionC": { "type": "string" },
+        "optionD": { "type": "string" },
+        "correctOption": { "type": "string" },
+        "modelAnswer": { "type": "string" },
+        "relevantKeywords": { "type": "string" },
+        "orderIndex": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "examId", "type", "questionText", "orderIndex", "createdAt"]
+    },
+    "ExamSession": {
+      "title": "ExamSession",
+      "description": "Track active exam taking progress and cheating/proctoring counters",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "examId": { "type": "string" },
+        "currentQuestionId": { "type": "string" },
+        "tabSwitchCount": { "type": "number" },
+        "windowBlurCount": { "type": "number" },
+        "fullscreenExitCount": { "type": "number" },
+        "inactivityWarnings": { "type": "number" },
+        "status": { "type": "string", "enum": ["ACTIVE", "SUBMITTED", "EXPIRED"] },
+        "startedAt": { "type": "string" },
+        "lastActivityAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "examId", "tabSwitchCount", "windowBlurCount", "fullscreenExitCount", "inactivityWarnings", "status", "startedAt", "lastActivityAt"]
+    },
+    "StudentAnswer": {
+      "title": "StudentAnswer",
+      "description": "Saves student's typed or selected inputs for a question inside an active exam session",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "examId": { "type": "string" },
+        "questionId": { "type": "string" },
+        "answerText": { "type": "string" },
+        "isMarkedForReview": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "sessionId", "studentId", "examId", "questionId", "answerText", "isMarkedForReview", "updatedAt"]
+    },
+    "Result": {
+      "title": "Result",
+      "description": "Final score calculation, coins obtained and validation audit records",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "examId": { "type": "string" },
+        "score": { "type": "number" },
+         "maxScore": { "type": "number" },
+        "percentage": { "type": "number" },
+         "coinsEarned": { "type": "number" },
+        "passed": { "type": "boolean" },
+        "submittedAt": { "type": "string" }
+      },
+      "required": ["id", "sessionId", "studentId", "examId", "score", "maxScore", "percentage", "coinsEarned", "passed", "submittedAt"]
+    },
+    "MonitoringLog": {
+      "title": "MonitoringLog",
+      "description": "Security and proctoring trace logger entries",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "examId": { "type": "string" },
+        "eventType": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "sessionId", "studentId", "examId", "eventType", "details", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Collection of user details"
+    },
+    "/exams/{examId}": {
+      "schema": { "$ref": "#/entities/Exam" },
+      "description": "Collection of examination papers"
+    },
+    "/questions/{questionId}": {
+      "schema": { "$ref": "#/entities/Question" },
+      "description": "Collection of exam question entries"
+    },
+    "/examSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/ExamSession" },
+      "description": "Collection of live taking logs"
+    },
+    "/studentAnswers/{answerId}": {
+      "schema": { "$ref": "#/entities/StudentAnswer" },
+      "description": "Collection of actual typed responses from students"
+    },
+    "/results/{resultId}": {
+      "schema": { "$ref": "#/entities/Result" },
+      "description": "Collection of audit records of grading attempts"
+    },
+    "/monitoringLogs/{logId}": {
+      "schema": { "$ref": "#/entities/MonitoringLog" },
+      "description": "Audit security proctoring log registers"
+    }
+  }
+}
