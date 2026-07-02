@@ -282,35 +282,113 @@ function startServer() {
       email: u.email,
       role: u.role,
       coins: u.coins,
-      createdAt: u.createdAt
+      createdAt: u.createdAt,
+      studentClass: u.studentClass,
+      studentSection: u.studentSection,
+      studentStream: u.studentStream
     }));
     res.json(allUsers);
   });
+
+  const validateStudentAttributes = (studentClass?: string, studentSection?: string, studentStream?: string): { valid: boolean; error?: string } => {
+    const allowedClasses = ["11th", "12th"];
+    const allowedSections = ["MPC", "BIPC", "CEC"];
+    const allowedStreams = ["JEE", "NEET", "EAMCET"];
+
+    if (studentClass && !allowedClasses.includes(studentClass)) {
+      return { valid: false, error: `Class must be '11th' or '12th' (Case-sensitive)` };
+    }
+    if (studentSection && !allowedSections.includes(studentSection)) {
+      return { valid: false, error: `Section must be 'MPC', 'BIPC', or 'CEC' (Case-sensitive)` };
+    }
+    if (studentStream && studentStream.trim() !== "" && !allowedStreams.includes(studentStream)) {
+      return { valid: false, error: `Stream must be 'JEE', 'NEET', or 'EAMCET' (Case-sensitive)` };
+    }
+    return { valid: true };
+  };
 
   // Create login credentials for teachers/students
   app.post("/api/admin/users", authenticate, (req: Request, res: Response) => {
     if (req.user?.role !== "admin" && req.user?.role !== "teacher") {
       return res.status(403).json({ error: "Admin or Teacher authorization required." });
     }
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, studentClass, studentSection, studentStream } = req.body;
     if (!name || !email || !password || !role) {
       return res.status(400).json({ error: "All login fields (name, email, password, role) are required." });
     }
     if (role !== "student" && role !== "teacher" && role !== "admin") {
       return res.status(400).json({ error: "Invalid role configured." });
     }
+    if (role === "student") {
+      const check = validateStudentAttributes(studentClass, studentSection, studentStream);
+      if (!check.valid) {
+        return res.status(400).json({ error: check.error });
+      }
+    }
     const existing = Database.getUserByEmail(email);
     if (existing) {
       return res.status(400).json({ error: "Email address is already in use by another user account." });
     }
-    const newUser = Database.createUser(name, email, password, role);
+    const newUser = Database.createUser(name, email, password, role, studentClass, studentSection, studentStream);
     res.status(201).json({
       id: newUser.id,
       name: newUser.name,
       email: newUser.email,
       role: newUser.role,
-      coins: newUser.coins
+      coins: newUser.coins,
+      studentClass: newUser.studentClass,
+      studentSection: newUser.studentSection,
+      studentStream: newUser.studentStream
     });
+  });
+
+  // Bulk create student logins
+  app.post("/api/admin/users/bulk", authenticate, (req: Request, res: Response) => {
+    if (req.user?.role !== "admin" && req.user?.role !== "teacher") {
+      return res.status(403).json({ error: "Admin or Teacher authorization required." });
+    }
+    const { users } = req.body;
+    if (!Array.isArray(users)) {
+      return res.status(400).json({ error: "Users list must be a JSON array." });
+    }
+    const created: any[] = [];
+    const errors: string[] = [];
+
+    for (const u of users) {
+      const { name, email, password, studentClass, studentSection, studentStream } = u;
+      if (!name || !email || !password) {
+        errors.push(`Row for ${email || "unknown"} omitted: missing name, email or password.`);
+        continue;
+      }
+      const existing = Database.getUserByEmail(email);
+      if (existing) {
+        errors.push(`Row for ${email} omitted: user already exists.`);
+        continue;
+      }
+      
+      const check = validateStudentAttributes(studentClass, studentSection, studentStream);
+      if (!check.valid) {
+        errors.push(`Row for ${email} omitted: ${check.error}`);
+        continue;
+      }
+
+      try {
+        const newUser = Database.createUser(name, email.trim(), password, "student", studentClass, studentSection, studentStream);
+        created.push({
+          id: newUser.id,
+          name: newUser.name,
+          email: newUser.email,
+          role: newUser.role,
+          coins: newUser.coins,
+          studentClass: newUser.studentClass,
+          studentSection: newUser.studentSection,
+          studentStream: newUser.studentStream
+        });
+      } catch (err: any) {
+        errors.push(`Failed to create ${email}: ${err.message || "Unknown error"}`);
+      }
+    }
+    res.json({ success: true, count: created.length, created, errors });
   });
 
   // Update a student/teacher details or admin details
@@ -319,12 +397,18 @@ function startServer() {
       return res.status(403).json({ error: "Admin or Teacher authorization required." });
     }
     const { id } = req.params;
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, studentClass, studentSection, studentStream } = req.body;
     if (!name || !email || !role) {
       return res.status(400).json({ error: "Name, email and role are required." });
     }
+    if (role === "student") {
+      const check = validateStudentAttributes(studentClass, studentSection, studentStream);
+      if (!check.valid) {
+        return res.status(400).json({ error: check.error });
+      }
+    }
     try {
-      const updated = Database.updateUserByAdmin(id, name, email, role, password || undefined);
+      const updated = Database.updateUserByAdmin(id, name, email, role, password || undefined, studentClass, studentSection, studentStream);
       if (!updated) {
         return res.status(404).json({ error: "User not found." });
       }
@@ -333,7 +417,10 @@ function startServer() {
         name: updated.name,
         email: updated.email,
         role: updated.role,
-        coins: updated.coins
+        coins: updated.coins,
+        studentClass: updated.studentClass,
+        studentSection: updated.studentSection,
+        studentStream: updated.studentStream
       });
     } catch (e: any) {
       res.status(400).json({ error: e.message || "Failed to edit user values." });
@@ -389,8 +476,9 @@ function startServer() {
   // Real-Time Event Stream Endpoint (Server-Sent Events)
   app.get("/api/sync/stream", (req: Request, res: Response) => {
     res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders(); // Establish the connection immediately
 
     // Add client to active pool
@@ -433,15 +521,28 @@ function startServer() {
   // Complete List of Exams
   app.get("/api/exams", authenticate, (req: Request, res: Response) => {
     const exams = Database.getExams();
-    // For students, filter by isDeleted, isPublished and scheduled publishAt
+    // For students, filter by isDeleted, isPublished, scheduled publishAt and target class/section/stream
     if (req.user?.role === "student") {
       const now = new Date();
+      const student = Database.getUserById(req.user.id);
+      const sClass = student?.studentClass || "";
+      const sSection = student?.studentSection || "";
+      const sStream = student?.studentStream || "";
+
       return res.json(exams.filter((e) => {
         if (e.isDeleted) return false;
         // If there is a scheduled publish date in the future, don't show it
         if (e.publishAt && new Date(e.publishAt) > now) return false;
         // If it is explicitly published, show it. Or, if it is scheduled of the past/present, consider it published.
-        return e.isPublished || (e.publishAt && new Date(e.publishAt) <= now);
+        const isPub = e.isPublished || (e.publishAt && new Date(e.publishAt) <= now);
+        if (!isPub) return false;
+
+        // Class/Section/Stream segregation checks:
+        if (e.examClass && e.examClass !== "All" && e.examClass !== sClass) return false;
+        if (e.examSection && e.examSection !== "All" && e.examSection !== sSection) return false;
+        if (e.examStream && e.examStream !== "All" && e.examStream !== sStream) return false;
+
+        return true;
       }));
     }
     // For teachers, filter out deleted exams
@@ -453,14 +554,19 @@ function startServer() {
     if (req.user?.role !== "teacher" && req.user?.role !== "admin") {
       return res.status(403).json({ error: "Access Denied. Teachers only." });
     }
-    const { title, subject, description, durationMinutes, publishAt } = req.body;
+    const { title, subject, description, durationMinutes, publishAt, examClass, examSection, examStream } = req.body;
     if (!title || !durationMinutes) {
       return res.status(400).json({ error: "Title and duration are required" });
     }
     const exam = Database.createExam(title, subject || "General", description || "", Number(durationMinutes));
-    if (publishAt) {
-      Database.updateExam(exam.id, { publishAt });
-      exam.publishAt = publishAt;
+    const updates: Partial<any> = {};
+    if (publishAt !== undefined) updates.publishAt = publishAt;
+    if (examClass !== undefined) updates.examClass = examClass;
+    if (examSection !== undefined) updates.examSection = examSection;
+    if (examStream !== undefined) updates.examStream = examStream;
+    if (Object.keys(updates).length > 0) {
+      Database.updateExam(exam.id, updates);
+      Object.assign(exam, updates);
     }
     res.status(201).json(exam);
   });
@@ -510,7 +616,7 @@ function startServer() {
       return res.status(403).json({ error: "Access Denied. Teachers only." });
     }
     const examId = req.params.id;
-    const { title, description, durationMinutes, isPublished, publishAt } = req.body;
+    const { title, description, durationMinutes, isPublished, publishAt, examClass, examSection, examStream } = req.body;
     
     const updates: Partial<any> = {};
     if (title !== undefined) updates.title = title;
@@ -526,6 +632,9 @@ function startServer() {
       updates.isPublished = Boolean(isPublished);
     }
     if (publishAt !== undefined) updates.publishAt = publishAt; // Supplying empty string nullifies it
+    if (examClass !== undefined) updates.examClass = examClass;
+    if (examSection !== undefined) updates.examSection = examSection;
+    if (examStream !== undefined) updates.examStream = examStream;
 
     const exam = Database.updateExam(examId, updates);
     if (!exam) {
@@ -848,16 +957,40 @@ function startServer() {
       if (!task) continue;
 
       console.log(`[GradingQueue] Starting grading for studentId: ${task.studentId}, examId: ${task.examId}, isExpired: ${task.isExpired}`);
-      try {
-        await Database.evaluateExam(task.studentId, task.examId, task.isExpired);
-        console.log(`[GradingQueue] Successfully graded studentId: ${task.studentId}, examId: ${task.examId}`);
-      } catch (err) {
-        console.error(`[GradingQueue] Failed to grade studentId: ${task.studentId}, examId: ${task.examId}:`, err);
+      
+      let attempts = 0;
+      const maxRetries = 3;
+      let success = false;
+
+      while (attempts <= maxRetries && !success) {
+        try {
+          await Database.evaluateExam(task.studentId, task.examId, task.isExpired);
+          success = true;
+          console.log(`[GradingQueue] Successfully graded studentId: ${task.studentId}, examId: ${task.examId} on attempt ${attempts + 1}`);
+        } catch (err: any) {
+          attempts++;
+          console.error(`[GradingQueue] Attempt ${attempts} failed for studentId: ${task.studentId}, examId: ${task.examId}:`, err);
+          
+          if (attempts <= maxRetries) {
+            // Attempt 1 fails -> wait 10 seconds before Attempt 2 (Retry 1)
+            // Attempt 2 or 3 fails -> wait 60 seconds before next retry
+            const waitTimeMs = attempts === 1 ? 10000 : 60000;
+            console.warn(`[GradingQueue] Waiting ${waitTimeMs / 1000} seconds before retry attempt ${attempts + 1}...`);
+            await new Promise((resolve) => setTimeout(resolve, waitTimeMs));
+          } else {
+            console.error(`[GradingQueue] All ${maxRetries} retry attempts failed for studentId: ${task.studentId}, examId: ${task.examId}. Setting score to 0 and marking as failed.`);
+            try {
+              Database.markGradingFailed(task.studentId, task.examId);
+            } catch (failErr) {
+              console.error(`[GradingQueue] Failed to mark submission as failed:`, failErr);
+            }
+          }
+        }
       }
 
-      // Add a 2-second delay gap between each grading task to prevent overloading the Gemini API
-      console.log(`[GradingQueue] Active queue size: ${gradingQueue.length}. Throttling for 2 seconds before the next task...`);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Add a 3-second delay gap between each grading task to prevent overloading the Gemini API
+      console.log(`[GradingQueue] Active queue size: ${gradingQueue.length}. Throttling for 3 seconds before the next task...`);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
 
     isProcessingQueue = false;
@@ -908,7 +1041,7 @@ function startServer() {
       addGradingTask(studentId, examId, Boolean(isExpired));
 
       res.json({
-        message: "Exam submitted! Results will be ready in a few minutes.",
+        message: "Exam submitted successfully! Your results will appear in your history within a few minutes.",
         session: closedSession
       });
     } catch (err: any) {
@@ -967,7 +1100,17 @@ function startServer() {
       return res.status(404).json({ error: "Session history not found" });
     }
 
-    const mainResult = Database.getResultByStudentAndExam(studentId, examId) || {
+    const dbResult = Database.getResultByStudentAndExam(studentId, examId);
+    if (!dbResult) {
+      if (finalSession.status === "SUBMITTED" || finalSession.status === "EXPIRED") {
+        return res.json({
+          gradingInProgress: true,
+          message: "Grading in Progress..."
+        });
+      }
+    }
+
+    const mainResult = dbResult || {
       score: 0,
       maxScore: 0,
       passed: false,

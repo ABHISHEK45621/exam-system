@@ -3,7 +3,7 @@ import {
   LayoutDashboard, PlusCircle, ClipboardList, Activity, 
   BarChart3, Trophy, Settings, LogOut, Check, X, Edit, 
   Trash2, ArrowUp, ArrowDown, Sparkles, RefreshCw, Eye, BookOpen, Clock, HelpCircle, ShieldAlert, Sun, Moon,
-  Users, UserPlus, Edit3, Search, Shield, Lock, Calendar
+  Users, UserPlus, Edit3, Search, Shield, Lock, Calendar, FileSpreadsheet, UploadCloud
 } from "lucide-react";
 import { 
   UserProfile, Exam, Question, TeacherGlobalStats, 
@@ -67,6 +67,26 @@ export default function TeacherDashboard({
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("ALL");
 
+  // Student directory filters
+  const [userDirClassFilter, setUserDirClassFilter] = useState<string>("ALL");
+  const [userDirSectionFilter, setUserDirSectionFilter] = useState<string>("ALL");
+  const [userDirStreamFilter, setUserDirStreamFilter] = useState<string>("ALL");
+
+  // Leaderboard filters
+  const [leaderboardClassFilter, setLeaderboardClassFilter] = useState<string>("ALL");
+  const [leaderboardSectionFilter, setLeaderboardSectionFilter] = useState<string>("ALL");
+  const [leaderboardStreamFilter, setLeaderboardStreamFilter] = useState<string>("ALL");
+
+  // New Student registration Class, Section, Stream details
+  const [createStudentClass, setCreateStudentClass] = useState("");
+  const [createStudentSection, setCreateStudentSection] = useState("");
+  const [createStudentStream, setCreateStudentStream] = useState("");
+
+  // Edit Student details
+  const [editStudentClass, setEditStudentClass] = useState("");
+  const [editStudentSection, setEditStudentSection] = useState("");
+  const [editStudentStream, setEditStudentStream] = useState("");
+
   // User Modals (Create & Edit)
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createName, setCreateName] = useState("");
@@ -88,6 +108,14 @@ export default function TeacherDashboard({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletingUser, setDeletingUser] = useState<any | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Bulk Import CSV states
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [bulkCSVText, setBulkCSVText] = useState("");
+  const [bulkParsedStudents, setBulkParsedStudents] = useState<any[]>([]);
+  const [bulkImportLoading, setBulkImportLoading] = useState(false);
+  const [bulkImportResult, setBulkImportResult] = useState<{ success: boolean; count: number; errors: string[] } | null>(null);
+  const [bulkImportFileError, setBulkImportFileError] = useState<string | null>(null);
 
   // Custom modal states for deleting exams and questions
   const [deletingExam, setDeletingExam] = useState<Exam | null>(null);
@@ -211,7 +239,10 @@ export default function TeacherDashboard({
           name: createName,
           email: createEmail,
           password: createPassword,
-          role: createRole
+          role: createRole,
+          studentClass: createStudentClass || undefined,
+          studentSection: createStudentSection || undefined,
+          studentStream: createStudentStream || undefined
         })
       });
       const data = await res.json();
@@ -223,11 +254,198 @@ export default function TeacherDashboard({
       setCreateEmail("");
       setCreatePassword("");
       setCreateRole("student");
+      setCreateStudentClass("");
+      setCreateStudentSection("");
+      setCreateStudentStream("");
       fetchUsers();
     } catch (err: any) {
       setCreateError(err.message);
     } finally {
       setCreateLoading(false);
+    }
+  };
+
+  const handleBulkCSVParse = (text: string) => {
+    setBulkCSVText(text);
+    setBulkImportFileError(null);
+    setBulkImportResult(null);
+
+    const lines = text.split(/\r?\n/);
+    if (lines.length === 0 || (lines.length === 1 && !lines[0].trim())) {
+      setBulkParsedStudents([]);
+      setBulkImportFileError("The file seems to be empty.");
+      return;
+    }
+
+    // Try to find headers
+    const firstLine = lines[0].toLowerCase();
+    const isHeaderRow = firstLine.includes("name") || firstLine.includes("email") || firstLine.includes("password");
+
+    const parsed: any[] = [];
+    const startIndex = isHeaderRow ? 1 : 0;
+
+    for (let i = startIndex; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      // Simple CSV parser supporting double quotes
+      const values: string[] = [];
+      let current = "";
+      let inQuotes = false;
+      for (let j = 0; j < line.length; j++) {
+        const char = line[j];
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === "," && !inQuotes) {
+          values.push(current.trim());
+          current = "";
+        } else {
+          current += char;
+        }
+      }
+      values.push(current.trim());
+
+      let name = "";
+      let email = "";
+      let password = "";
+      let studentClass = "";
+      let studentSection = "";
+      let studentStream = "";
+
+      if (isHeaderRow) {
+        const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+        headers.forEach((header, index) => {
+          const val = (values[index] || "").replace(/^"|"$/g, "").trim();
+          if (header.includes("name")) name = val;
+          else if (header.includes("email")) email = val;
+          else if (header.includes("password")) password = val;
+          else if (header.includes("class")) studentClass = val;
+          else if (header.includes("section")) studentSection = val;
+          else if (header.includes("stream") || header.includes("target") || header.includes("group")) studentStream = val;
+        });
+      }
+
+      // Fallback/direct index matching if header was not matched fully or it's not a header row
+      if (!name && values[0]) name = values[0].replace(/^"|"$/g, "").trim();
+      if (!email && values[1]) email = values[1].replace(/^"|"$/g, "").trim();
+      if (!password && values[2]) password = values[2].replace(/^"|"$/g, "").trim();
+      if (!studentClass && values[3]) studentClass = values[3].replace(/^"|"$/g, "").trim();
+      if (!studentSection && values[4]) studentSection = values[4].replace(/^"|"$/g, "").trim();
+      if (!studentStream && values[5]) studentStream = values[5].replace(/^"|"$/g, "").trim();
+
+      if (name && email) {
+        let rowError = "";
+        const allowedClasses = ["11th", "12th"];
+        const allowedSections = ["MPC", "BIPC", "CEC"];
+        const allowedStreams = ["JEE", "NEET", "EAMCET"];
+
+        if (studentClass && !allowedClasses.includes(studentClass)) {
+          rowError += `Class must be '11th' or '12th' (Case-sensitive). `;
+        }
+        if (studentSection && !allowedSections.includes(studentSection)) {
+          rowError += `Section must be 'MPC', 'BIPC', or 'CEC' (Case-sensitive). `;
+        }
+        if (studentStream && studentStream.trim() !== "" && !allowedStreams.includes(studentStream)) {
+          rowError += `Stream must be 'JEE', 'NEET', or 'EAMCET' (Case-sensitive). `;
+        }
+
+        parsed.push({
+          name,
+          email,
+          password: password || "123456", // default fallback password
+          studentClass,
+          studentSection,
+          studentStream,
+          error: rowError || undefined
+        });
+      }
+    }
+
+    if (parsed.length === 0) {
+      setBulkImportFileError("No valid rows could be parsed. Ensure you have Name and Email columns.");
+    }
+    setBulkParsedStudents(parsed);
+  };
+
+  const handleBulkImportSubmit = async () => {
+    if (bulkParsedStudents.length === 0) return;
+    setBulkImportLoading(true);
+    setBulkImportResult(null);
+
+    try {
+      const res = await fetch("/api/admin/users/bulk", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ users: bulkParsedStudents })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to submit bulk users.");
+      }
+      setBulkImportResult({
+        success: data.success,
+        count: data.count,
+        errors: data.errors || []
+      });
+      // Clear current file/parsed list if success
+      setBulkParsedStudents([]);
+      setBulkCSVText("");
+      fetchUsers();
+    } catch (err: any) {
+      setBulkImportFileError(err.message || "An unexpected error occurred during import.");
+    } finally {
+      setBulkImportLoading(false);
+    }
+  };
+
+  const handleImagePaste = (
+    e: React.ClipboardEvent<HTMLTextAreaElement>,
+    setValue: (val: string) => void,
+    currentValue: string
+  ) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.indexOf("image") !== -1) {
+        // Prevent default paste behavior
+        e.preventDefault();
+
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const base64 = event.target?.result as string;
+          if (base64) {
+            const markdownImage = `\n![Pasted Image](${base64})\n`;
+            
+            // Insert at cursor selection point
+            const target = e.target as HTMLTextAreaElement;
+            const startPos = target.selectionStart;
+            const endPos = target.selectionEnd;
+            const newValue = 
+              currentValue.substring(0, startPos) +
+              markdownImage +
+              currentValue.substring(endPos, currentValue.length);
+
+            setValue(newValue);
+
+            // Set cursor position right after the inserted markdown
+            setTimeout(() => {
+              target.focus();
+              const newCursorPos = startPos + markdownImage.length;
+              target.setSelectionRange(newCursorPos, newCursorPos);
+            }, 50);
+          }
+        };
+        reader.readAsDataURL(file);
+        break; // Process only the first image found
+      }
     }
   };
 
@@ -248,7 +466,10 @@ export default function TeacherDashboard({
           name: editName,
           email: editEmail,
           password: editPassword || undefined,
-          role: editRole
+          role: editRole,
+          studentClass: editStudentClass || undefined,
+          studentSection: editStudentSection || undefined,
+          studentStream: editStudentStream || undefined
         })
       });
       const data = await res.json();
@@ -260,6 +481,9 @@ export default function TeacherDashboard({
       setEditName("");
       setEditEmail("");
       setEditPassword("");
+      setEditStudentClass("");
+      setEditStudentSection("");
+      setEditStudentStream("");
       fetchUsers();
     } catch (err: any) {
       setEditError(err.message);
@@ -297,6 +521,9 @@ export default function TeacherDashboard({
     setEditEmail(targetUser.email);
     setEditRole(targetUser.role);
     setEditPassword("");
+    setEditStudentClass(targetUser.studentClass || "");
+    setEditStudentSection(targetUser.studentSection || "");
+    setEditStudentStream(targetUser.studentStream || "");
     setEditError(null);
     setShowEditModal(true);
   };
@@ -325,6 +552,9 @@ export default function TeacherDashboard({
   const [newSubject, setNewSubject] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newDuration, setNewDuration] = useState("45");
+  const [newExamClass, setNewExamClass] = useState("");
+  const [newExamSection, setNewExamSection] = useState("");
+  const [newExamStream, setNewExamStream] = useState("");
 
   // Form states - Edit Exam
   const [editingExamId, setEditingExamId] = useState<string | null>(null);
@@ -332,6 +562,9 @@ export default function TeacherDashboard({
   const [editSubject, setEditSubject] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editDuration, setEditDuration] = useState("45");
+  const [editExamClass, setEditExamClass] = useState("");
+  const [editExamSection, setEditExamSection] = useState("");
+  const [editExamStream, setEditExamStream] = useState("");
 
   // Form states - Add/Edit Question
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
@@ -417,7 +650,7 @@ export default function TeacherDashboard({
     };
 
     eventSource.onerror = (err) => {
-      console.error("[EventSource] Conn error. Falling back to active local offline tracking...", err);
+      console.warn("[EventSource] Conn info/recon. Falling back to active local offline tracking...", err);
       setFirebaseOnline(false);
     };
 
@@ -601,7 +834,10 @@ export default function TeacherDashboard({
           subject: newSubject.trim() || "General",
           description: newDesc,
           durationMinutes: Number(newDuration),
-          publishAt: newPublishAt ? new Date(newPublishAt).toISOString() : ""
+          publishAt: newPublishAt ? new Date(newPublishAt).toISOString() : "",
+          examClass: newExamClass || undefined,
+          examSection: newExamSection || undefined,
+          examStream: newExamStream || undefined
         })
       });
       if (res.ok) {
@@ -611,6 +847,9 @@ export default function TeacherDashboard({
         setNewDesc("");
         setNewDuration("45");
         setNewPublishAt("");
+        setNewExamClass("");
+        setNewExamSection("");
+        setNewExamStream("");
         const newlyCreated = await res.json();
         fetchExams();
         // Redirect to Manage tab and open builder immediately
@@ -623,6 +862,72 @@ export default function TeacherDashboard({
     }
   };
 
+  const handleSaveDraftAndReturn = async () => {
+    if (!newTitle.trim()) {
+      alert("Please enter an Exam Title to save as a draft.");
+      return;
+    }
+    const durationVal = Number(newDuration) || 45;
+    if (durationVal < 5 || durationVal > 300) {
+      alert("Please enter a valid duration between 5 and 300 minutes.");
+      return;
+    }
+    
+    setActionLoading(true);
+    try {
+      const res = await fetch("/api/exams", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          title: newTitle,
+          subject: newSubject.trim() || "General",
+          description: newDesc,
+          durationMinutes: durationVal,
+          publishAt: newPublishAt ? new Date(newPublishAt).toISOString() : "",
+          examClass: newExamClass || undefined,
+          examSection: newExamSection || undefined,
+          examStream: newExamStream || undefined
+        })
+      });
+      if (res.ok) {
+        alert("Exam draft saved successfully!");
+        setNewTitle("");
+        setNewSubject("");
+        setNewDesc("");
+        setNewDuration("45");
+        setNewPublishAt("");
+        setNewExamClass("");
+        setNewExamSection("");
+        setNewExamStream("");
+        fetchExams();
+        setActiveTab("MANAGE_EXAMS");
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to save exam draft.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("An error occurred while saving the exam draft.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCancelAndReturn = () => {
+    setNewTitle("");
+    setNewSubject("");
+    setNewDesc("");
+    setNewDuration("45");
+    setNewPublishAt("");
+    setNewExamClass("");
+    setNewExamSection("");
+    setNewExamStream("");
+    setActiveTab("DASHBOARD");
+  };
+
   const startEditingExam = (exam: Exam) => {
     setEditingExamId(exam.id);
     setEditTitle(exam.title);
@@ -630,6 +935,9 @@ export default function TeacherDashboard({
     setEditDesc(exam.description);
     setEditDuration(String(exam.durationMinutes));
     setEditPublishAt(formatISOToLocalDatetime(exam.publishAt));
+    setEditExamClass(exam.examClass || "");
+    setEditExamSection(exam.examSection || "");
+    setEditExamStream(exam.examStream || "");
   };
 
   const handleUpdateExam = async (examId: string) => {
@@ -647,7 +955,10 @@ export default function TeacherDashboard({
           subject: editSubject.trim() || "General",
           description: editDesc,
           durationMinutes: Number(editDuration),
-          publishAt: editPublishAt ? new Date(editPublishAt).toISOString() : ""
+          publishAt: editPublishAt ? new Date(editPublishAt).toISOString() : "",
+          examClass: editExamClass || undefined,
+          examSection: editExamSection || undefined,
+          examStream: editExamStream || undefined
         })
       });
       if (res.ok) {
@@ -657,6 +968,9 @@ export default function TeacherDashboard({
         setEditDesc("");
         setEditDuration("45");
         setEditPublishAt("");
+        setEditExamClass("");
+        setEditExamSection("");
+        setEditExamStream("");
         fetchExams();
       }
     } catch (e) {
@@ -938,11 +1252,41 @@ export default function TeacherDashboard({
     resetQuestionForm();
   };
 
+  // Predefined lists of options provided/allowed in the system
+  const PREDEFINED_CLASSES = ["11th", "12th"];
+  const PREDEFINED_SECTIONS = ["MPC", "BIPC", "CEC"];
+  const PREDEFINED_STREAMS = ["JEE", "NEET", "EAMCET"];
+
+  // Dynamically extract active student Class/Section/Stream attributes combined with predefined ones
+  const availableClasses = Array.from(new Set([...PREDEFINED_CLASSES, ...users.filter((u: any) => u.role === "student").map((u: any) => u.studentClass).filter(Boolean)])) as string[];
+  const availableSections = Array.from(new Set([...PREDEFINED_SECTIONS, ...users.filter((u: any) => u.role === "student").map((u: any) => u.studentSection).filter(Boolean)])) as string[];
+  const availableStreams = Array.from(new Set([...PREDEFINED_STREAMS, ...users.filter((u: any) => u.role === "student").map((u: any) => u.studentStream).filter(Boolean)])) as string[];
+
+  const hasBulkErrors = bulkParsedStudents.some((s: any) => s.error);
+
   // Filter accounts list to only show student logins
   const filteredUsers = users.filter((u: any) => {
     if (u.role !== "student") return false;
     const query = searchQuery.toLowerCase();
-    return u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query);
+    const matchesSearch = u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query);
+    if (!matchesSearch) return false;
+
+    if (userDirClassFilter !== "ALL" && u.studentClass !== userDirClassFilter) return false;
+    if (userDirSectionFilter !== "ALL" && u.studentSection !== userDirSectionFilter) return false;
+    if (userDirStreamFilter !== "ALL" && u.studentStream !== userDirStreamFilter) return false;
+
+    return true;
+  });
+
+  const leaderboardClasses = Array.from(new Set(leaderboard.map((student: any) => student.studentClass).filter(Boolean))) as string[];
+  const leaderboardSections = Array.from(new Set(leaderboard.map((student: any) => student.studentSection).filter(Boolean))) as string[];
+  const leaderboardStreams = Array.from(new Set(leaderboard.map((student: any) => student.studentStream).filter(Boolean))) as string[];
+
+  const filteredLeaderboard = leaderboard.filter((student: any) => {
+    if (leaderboardClassFilter !== "ALL" && student.studentClass !== leaderboardClassFilter) return false;
+    if (leaderboardSectionFilter !== "ALL" && student.studentSection !== leaderboardSectionFilter) return false;
+    if (leaderboardStreamFilter !== "ALL" && student.studentStream !== leaderboardStreamFilter) return false;
+    return true;
   });
 
   const studentCount = users.filter((u: any) => u.role === "student").length;
@@ -1232,19 +1576,6 @@ export default function TeacherDashboard({
                 <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider">Exam Configuration Gateway</p>
                 <h1 className="text-2xl font-black font-display text-gray-900 dark:text-slate-50 mt-1">Create Brand New Examination</h1>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setNewTitle("");
-                  setNewDuration("");
-                  setNewSubject("");
-                  setNewDesc("");
-                  setActiveTab("DASHBOARD");
-                }}
-                className="flex items-center gap-2 text-xs font-bold text-slate-600 dark:text-slate-350 hover:text-rose-600 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 px-4 py-2.5 rounded-xl cursor-pointer transition"
-              >
-                &larr; Exit & Cancel Setup
-              </button>
             </div>
 
             <form onSubmit={handleCreateExamSubmit} className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-gray-150 dark:border-slate-800/80 space-y-6 shadow-sm">
@@ -1287,6 +1618,47 @@ export default function TeacherDashboard({
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-slate-50 dark:bg-slate-950/40 p-5 rounded-2xl border border-gray-150 dark:border-slate-850">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Target Class (Optional)</label>
+                  <select
+                    value={newExamClass}
+                    onChange={(e) => setNewExamClass(e.target.value)}
+                    className="w-full text-sm p-4 bg-white border border-gray-200 focus:border-emerald-500 dark:bg-slate-900 dark:border-slate-800 dark:focus:border-emerald-600 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
+                  >
+                    <option value="All">All Classes (11th & 12th)</option>
+                    <option value="11th">11th</option>
+                    <option value="12th">12th</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Target Section (Optional)</label>
+                  <select
+                    value={newExamSection}
+                    onChange={(e) => setNewExamSection(e.target.value)}
+                    className="w-full text-sm p-4 bg-white border border-gray-200 focus:border-emerald-500 dark:bg-slate-900 dark:border-slate-800 dark:focus:border-emerald-600 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
+                  >
+                    <option value="All">All Sections (MPC, BIPC, CEC)</option>
+                    <option value="MPC">MPC</option>
+                    <option value="BIPC">BIPC</option>
+                    <option value="CEC">CEC</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Target Stream/Group (Optional)</label>
+                  <select
+                    value={newExamStream}
+                    onChange={(e) => setNewExamStream(e.target.value)}
+                    className="w-full text-sm p-4 bg-white border border-gray-200 focus:border-emerald-500 dark:bg-slate-900 dark:border-slate-800 dark:focus:border-emerald-600 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
+                  >
+                    <option value="All">All Streams (JEE, NEET, EAMCET)</option>
+                    <option value="JEE">JEE</option>
+                    <option value="NEET">NEET</option>
+                    <option value="EAMCET">EAMCET</option>
+                  </select>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Description and Instructions</label>
                 <textarea
@@ -1318,24 +1690,27 @@ export default function TeacherDashboard({
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-4 pt-2">
+              <div className="flex flex-col md:flex-row gap-4 pt-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setNewTitle("");
-                    setNewDuration("");
-                    setNewSubject("");
-                    setNewDesc("");
-                    setActiveTab("DASHBOARD");
-                  }}
-                  className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-750 dark:text-slate-200 font-bold rounded-xl transition duration-150 cursor-pointer text-sm font-sans"
+                  onClick={handleCancelAndReturn}
+                  disabled={actionLoading}
+                  className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 font-bold rounded-xl transition duration-150 cursor-pointer text-sm font-sans"
                 >
-                  Cancel setup & Return
+                  Cancel and Return
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveDraftAndReturn}
+                  disabled={actionLoading}
+                  className="flex-1 py-4 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/20 dark:hover:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 font-bold rounded-xl border border-indigo-200 dark:border-indigo-900/40 transition duration-150 cursor-pointer text-sm font-sans"
+                >
+                  {actionLoading ? "Saving draft..." : "Save and Return (Draft)"}
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="flex-1 py-4 bg-emerald-605 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition duration-150 cursor-pointer text-sm shadow-lg shadow-emerald-600/10 active:scale-98"
+                  className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition duration-150 cursor-pointer text-sm shadow-lg shadow-emerald-600/10 active:scale-98"
                 >
                   {actionLoading ? "Saving configuration..." : "Create and Open Question Builder Workspace"}
                 </button>
@@ -1549,6 +1924,7 @@ export default function TeacherDashboard({
                             placeholder="Enter the question statement clearly..."
                             value={qText}
                             onChange={(e) => setQText(e.target.value)}
+                            onPaste={(e) => handleImagePaste(e, setQText, qText)}
                             ref={(el) => {
                               if (el) {
                                   el.style.height = "auto";
@@ -1557,6 +1933,9 @@ export default function TeacherDashboard({
                             }}
                             className="w-full text-xs p-3 bg-gray-50 border border-gray-200 focus:border-emerald-500 dark:bg-slate-950 dark:border-slate-800 dark:focus:border-emerald-600 rounded-lg focus:outline-none text-slate-900 dark:text-slate-100 resize-none overflow-hidden min-h-[80px]"
                           />
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                            💡 <span className="font-semibold">Tip:</span> You can paste images directly (<span className="font-mono">Ctrl+V / Cmd+V</span>) from your clipboard into the question statement.
+                          </p>
                         </div>
 
                         {/* Custom Coin Reward option */}
@@ -1711,6 +2090,37 @@ export default function TeacherDashboard({
                                       placeholder="Subject Name"
                                     />
                                   </div>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <select 
+                                      className="p-2 border border-gray-200 dark:border-slate-750 bg-gray-50 dark:bg-slate-950 text-xs block rounded focus:outline-none text-slate-900 dark:text-slate-100 font-sans flex-1"
+                                      value={editExamClass}
+                                      onChange={(e) => setEditExamClass(e.target.value)}
+                                    >
+                                      <option value="All">All Classes</option>
+                                      <option value="11th">11th</option>
+                                      <option value="12th">12th</option>
+                                    </select>
+                                    <select 
+                                      className="p-2 border border-gray-200 dark:border-slate-750 bg-gray-50 dark:bg-slate-950 text-xs block rounded focus:outline-none text-slate-900 dark:text-slate-100 font-sans flex-1"
+                                      value={editExamSection}
+                                      onChange={(e) => setEditExamSection(e.target.value)}
+                                    >
+                                      <option value="All">All Sections</option>
+                                      <option value="MPC">MPC</option>
+                                      <option value="BIPC">BIPC</option>
+                                      <option value="CEC">CEC</option>
+                                    </select>
+                                    <select 
+                                      className="p-2 border border-gray-200 dark:border-slate-750 bg-gray-50 dark:bg-slate-950 text-xs block rounded focus:outline-none text-slate-900 dark:text-slate-100 font-sans flex-1"
+                                      value={editExamStream}
+                                      onChange={(e) => setEditExamStream(e.target.value)}
+                                    >
+                                      <option value="All">All Streams</option>
+                                      <option value="JEE">JEE</option>
+                                      <option value="NEET">NEET</option>
+                                      <option value="EAMCET">EAMCET</option>
+                                    </select>
+                                  </div>
                                   <textarea 
                                     className="p-2 border border-slate-200 dark:border-slate-750 bg-gray-50 dark:bg-slate-950 text-xs block w-full rounded focus:outline-none text-slate-900 dark:text-slate-100 resize-none overflow-hidden min-h-[60px]"
                                     value={editDesc}
@@ -1768,9 +2178,14 @@ export default function TeacherDashboard({
                                     )}
                                   </div>
                                   <p className="text-gray-400 dark:text-slate-500 text-[11px] leading-relaxed max-w-2xl">{exam.description}</p>
-                                  <div className="flex gap-4 text-[10px] font-mono text-gray-400">
+                                  <div className="flex flex-wrap gap-4 text-[10px] font-mono text-gray-400 items-center">
                                     <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {exam.durationMinutes} Minutes</span>
                                     <span>Subject: {exam.subject || "General"}</span>
+                                    {exam.examClass && (
+                                      <span className="px-2 py-0.5 bg-blue-100/50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-350 font-bold rounded text-[9px]">
+                                        Class {exam.examClass}{exam.examSection && ` - ${exam.examSection}`}{exam.examStream && ` (${exam.examStream})`}
+                                      </span>
+                                    )}
                                   </div>
                                 </>
                               )}
@@ -2300,60 +2715,103 @@ export default function TeacherDashboard({
               <h1 className="text-2xl font-black font-display text-gray-900 dark:text-slate-50 mt-1">Global Leaderboard</h1>
             </div>
 
+            {/* Dynamic Class/Section/Stream Leaderboard Filters */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800/80 shadow-sm">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Filter Class</label>
+                <select
+                  value={leaderboardClassFilter}
+                  onChange={(e) => setLeaderboardClassFilter(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
+                >
+                  <option value="ALL">All Classes (11th, 12th, etc)</option>
+                  {availableClasses.map((cls) => (
+                    <option key={cls} value={cls}>Class {cls}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Filter Section</label>
+                <select
+                  value={leaderboardSectionFilter}
+                  onChange={(e) => setLeaderboardSectionFilter(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
+                >
+                  <option value="ALL">All Sections (MPC, BIPC, CEC, etc)</option>
+                  {availableSections.map((sec) => (
+                    <option key={sec} value={sec}>Section {sec}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Filter Stream/Target</label>
+                <select
+                  value={leaderboardStreamFilter}
+                  onChange={(e) => setLeaderboardStreamFilter(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
+                >
+                  <option value="ALL">All Streams (JEE, NEET, EAMCET, etc)</option>
+                  {availableStreams.map((st) => (
+                    <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             {/* TAB: LEADERBOARD CONTENT */}
             <div className="space-y-8 select-none">
               
               {/* Visual Top 3 podium header */}
-              {leaderboard.length > 0 && (
+              {filteredLeaderboard.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   
                   {/* 2nd Place Card */}
-                  {leaderboard[1] && (
+                  {filteredLeaderboard[1] && (
                     <div className="bg-gradient-to-b from-slate-100 to-white dark:from-slate-800/40 dark:to-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-3xl p-6 flex flex-col items-center justify-center text-center relative order-2 md:order-1 mt-0 md:mt-8 shadow-xs">
                       <div className="absolute top-4 left-4 bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border border-slate-300 dark:border-slate-700">2</div>
                       <div className="w-14 h-14 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 rounded-full flex items-center justify-center text-xl font-bold border-4 border-slate-300 dark:border-slate-700 shadow-md">
                         🥈
                       </div>
-                      <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 mt-4 leading-tight">{leaderboard[1].studentName}</h4>
+                      <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 mt-4 leading-tight">{filteredLeaderboard[1].studentName}</h4>
                       <p className="text-[10px] text-slate-400 uppercase font-mono tracking-wider font-semibold mt-1">Silver Runner</p>
                       
                       <div className="mt-4 flex flex-col items-center bg-slate-50 dark:bg-slate-950/40 px-4 py-2 rounded-xl border border-slate-100 dark:border-slate-800/60 w-full">
-                        <span className="text-sm font-black text-emerald-600 dark:text-emerald-400 font-mono">🪙 {leaderboard[1].totalCoins} Coins</span>
-                        <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {leaderboard[1].averagePercentage}%</span>
+                        <span className="text-sm font-black text-emerald-600 dark:text-emerald-400 font-mono">🪙 {filteredLeaderboard[1].totalCoins} Coins</span>
+                        <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {filteredLeaderboard[1].averagePercentage}%</span>
                       </div>
                     </div>
                   )}
 
                   {/* 1st Place Card - Main Focus */}
-                  {leaderboard[0] && (
+                  {filteredLeaderboard[0] && (
                     <div className="bg-gradient-to-b from-amber-50 to-white dark:from-amber-950/25 dark:to-slate-900 border-2 border-amber-300 dark:border-amber-800/50 rounded-3xl p-8 flex flex-col items-center justify-center text-center relative order-1 md:order-2 shadow-sm shadow-amber-500/5 hover:scale-[1.01] transition-all duration-300">
                       <div className="absolute top-4 left-4 bg-amber-500 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-black border-2 border-white dark:border-slate-900 shadow-md">1</div>
                       <div className="w-18 h-18 bg-amber-100 text-amber-600 dark:bg-amber-900/30 rounded-full flex items-center justify-center text-2xl font-bold border-4 border-amber-400 dark:border-amber-700/60 shadow-md">
                         👑
                       </div>
-                      <h4 className="font-black text-base text-slate-900 dark:text-slate-100 mt-4 leading-tight">{leaderboard[0].studentName}</h4>
+                      <h4 className="font-black text-base text-slate-900 dark:text-slate-100 mt-4 leading-tight">{filteredLeaderboard[0].studentName}</h4>
                       <p className="text-[10px] text-amber-600 dark:text-amber-400 uppercase font-mono tracking-widest font-extrabold mt-1">Grand Champion</p>
                       
                       <div className="mt-5 flex flex-col items-center bg-amber-500/5 dark:bg-amber-500/10 px-6 py-2.5 rounded-2xl border border-amber-500/10 w-full">
-                        <span className="text-base font-black text-amber-600 dark:text-amber-400 font-mono">🪙 {leaderboard[0].totalCoins} Coins</span>
-                        <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {leaderboard[0].averagePercentage}%</span>
+                        <span className="text-base font-black text-amber-600 dark:text-amber-400 font-mono">🪙 {filteredLeaderboard[0].totalCoins} Coins</span>
+                        <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {filteredLeaderboard[0].averagePercentage}%</span>
                       </div>
                     </div>
                   )}
 
                   {/* 3rd Place Card */}
-                  {leaderboard[2] && (
+                  {filteredLeaderboard[2] && (
                     <div className="bg-gradient-to-b from-amber-50/10 to-white dark:from-amber-950/5 dark:to-slate-900 border border-amber-600/10 dark:border-amber-900/10 rounded-3xl p-6 flex flex-col items-center justify-center text-center relative order-3 mt-0 md:mt-8 shadow-xs">
                       <div className="absolute top-4 left-4 bg-amber-700/15 text-amber-700 dark:text-amber-400 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border border-amber-600/20 dark:border-amber-900/10">3</div>
                       <div className="w-14 h-14 bg-amber-600/5 text-amber-700 dark:bg-amber-900/20 rounded-full flex items-center justify-center text-xl font-bold border-4 border-amber-600/20 dark:border-amber-900/20 shadow-md">
                         🥉
                       </div>
-                      <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 mt-4 leading-tight">{leaderboard[2].studentName}</h4>
+                      <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 mt-4 leading-tight">{filteredLeaderboard[2].studentName}</h4>
                       <p className="text-[10px] text-slate-400 uppercase font-mono tracking-wider font-semibold mt-1">Bronze Scholar</p>
                       
                       <div className="mt-4 flex flex-col items-center bg-slate-50 dark:bg-slate-950/40 px-4 py-2 rounded-xl border border-slate-100 dark:border-slate-800/60 w-full">
-                        <span className="text-sm font-black text-blue-600 dark:text-blue-400 font-mono">🪙 {leaderboard[2].totalCoins} Coins</span>
-                        <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {leaderboard[2].averagePercentage}%</span>
+                        <span className="text-sm font-black text-blue-600 dark:text-blue-400 font-mono">🪙 {filteredLeaderboard[2].totalCoins} Coins</span>
+                        <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {filteredLeaderboard[2].averagePercentage}%</span>
                       </div>
                     </div>
                   )}
@@ -2372,17 +2830,19 @@ export default function TeacherDashboard({
 
                 <div className="overflow-x-auto text-[11px]">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 dark:bg-slate-800 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                    <thead className="bg-slate-50 dark:bg-slate-800 text-[10px] uppercase font-bold text-slate-440 border-b border-slate-200 dark:border-slate-800">
                       <tr>
                         <th className="px-6 py-4 text-center w-16">Rank</th>
                         <th className="px-6 py-4">Student Name</th>
-                        <th className="px-6 py-4 text-center">Exams Attempted</th>
-                        <th className="px-6 py-4 text-center">Coins Balance</th>
-                        <th className="px-6 py-4 text-center">Average Accuracy</th>
+                        <th className="px-6 py-4 text-center font-display">Class / Section</th>
+                        <th className="px-6 py-4 text-center font-display">Exams Attempted</th>
+                        <th className="px-6 py-4 text-center font-display">Coins Balance</th>
+                        <th className="px-6 py-4 text-center font-display">Average Accuracy</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-150 dark:divide-slate-800">
-                      {leaderboard.map((student, idx) => {
+                      {filteredLeaderboard.map((student, idx) => {
+                        const relRank = idx + 1;
                         const isTop3 = idx < 3;
                         const badgeCols = [
                           "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-450",
@@ -2395,14 +2855,23 @@ export default function TeacherDashboard({
                             <td className="px-6 py-4.5 font-mono font-bold text-center">
                               {isTop3 ? (
                                 <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full border text-xs font-black ${badgeCols[idx]}`}>
-                                  {student.rank}
+                                  {relRank}
                                 </span>
                               ) : (
-                                <span className="text-slate-450">{student.rank}</span>
+                                <span className="text-slate-450">{relRank}</span>
                               )}
                             </td>
                             <td className="px-6 py-4.5 font-bold text-slate-900 dark:text-slate-100 font-sans text-xs">
                               {student.studentName}
+                            </td>
+                            <td className="px-6 py-4.5 text-center font-sans">
+                              {student.studentClass ? (
+                                <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 font-semibold text-[10px] rounded text-slate-700 dark:text-slate-300">
+                                  Class {student.studentClass}{student.studentSection && ` - ${student.studentSection}`}{student.studentStream && ` (${student.studentStream})`}
+                                </span>
+                              ) : (
+                                <span className="text-slate-450 italic text-[10px]">General</span>
+                              )}
                             </td>
                             <td className="px-6 py-4.5 font-mono text-center text-slate-500 dark:text-slate-400">{student.examsAttempted}</td>
                             <td className="px-6 py-4.5 font-mono font-bold text-center text-emerald-600 dark:text-emerald-400 text-sm">
@@ -2472,15 +2941,260 @@ export default function TeacherDashboard({
                 </div>
               </div>
 
-              <button
-                onClick={() => {
-                  setCreateError(null);
-                  setShowCreateModal(true);
-                }}
-                className="w-full md:w-auto shrink-0 py-3 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-98"
-              >
-                <UserPlus className="w-4 h-4" /> Create Student Login
-              </button>
+              <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto shrink-0">
+                <button
+                  onClick={() => {
+                    setShowBulkImport(!showBulkImport);
+                    setBulkImportResult(null);
+                    setBulkImportFileError(null);
+                    setBulkParsedStudents([]);
+                  }}
+                  className={`py-3 px-5 border font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-98 w-full md:w-auto ${
+                    showBulkImport 
+                      ? "bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200" 
+                      : "bg-blue-600 hover:bg-blue-500 border-blue-600 hover:border-blue-500 text-white"
+                  }`}
+                >
+                  <FileSpreadsheet className="w-4 h-4" /> Bulk Import Logins
+                </button>
+
+                <button
+                  onClick={() => {
+                    setCreateError(null);
+                    setShowCreateModal(true);
+                  }}
+                  className="py-3 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-98 w-full md:w-auto"
+                >
+                  <UserPlus className="w-4 h-4" /> Create Student Login
+                </button>
+              </div>
+            </div>
+
+            {/* BULK IMPORT COLLAPSIBLE PANEL */}
+            {showBulkImport && (
+              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-6 animate-fade-in text-xs">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-50 font-display">Bulk Student Login Importer</h3>
+                    <p className="text-slate-400 dark:text-slate-500 text-xxs mt-0.5">Upload a CSV/Excel CSV file or paste spreadsheet data to create accounts instantly.</p>
+                  </div>
+                  
+                  {/* Download Template Button */}
+                  <button
+                    onClick={() => {
+                      const headers = "Name, Email, Password, Class, Section, Stream\n";
+                      const row1 = "Alice Johnson, alice@school.edu, pass123, 11, MPC, JEE\n";
+                      const row2 = "Bob Smith, bob@school.edu, pass456, 12, BIPC, NEET\n";
+                      const blob = new Blob([headers + row1 + row2], { type: "text/csv;charset=utf-8;" });
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement("a");
+                      link.setAttribute("href", url);
+                      link.setAttribute("download", "student_import_template.csv");
+                      link.style.visibility = "hidden";
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    className="py-2 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 font-bold rounded-xl transition text-xxs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                    Download CSV Template
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* File Upload Trigger Drop Area */}
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase block">Step 1: Choose CSV File or Paste Data</label>
+                    <div 
+                      className="border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl p-6 hover:border-emerald-500/50 dark:hover:border-emerald-500/30 transition flex flex-col items-center justify-center text-center bg-slate-50/50 dark:bg-slate-950/10 cursor-pointer group min-h-[140px]"
+                      onClick={() => document.getElementById("bulk-file-input")?.click()}
+                    >
+                      <input 
+                        type="file" 
+                        id="bulk-file-input" 
+                        accept=".csv,.txt"
+                        className="hidden" 
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (evt) => {
+                              const text = evt.target?.result as string;
+                              handleBulkCSVParse(text);
+                            };
+                            reader.readAsText(file);
+                          }
+                        }}
+                      />
+                      <UploadCloud className="w-8 h-8 text-slate-400 group-hover:text-emerald-500 transition mb-3" />
+                      <p className="text-slate-800 dark:text-slate-200 font-bold text-xxs">Click to browse your device</p>
+                      <p className="text-slate-400 dark:text-slate-500 text-[10px] mt-1 font-mono">Supports standard comma-separated .csv exports</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">Or Paste Raw CSV Lines</label>
+                        {bulkCSVText && (
+                          <button 
+                            type="button" 
+                            onClick={() => handleBulkCSVParse("")} 
+                            className="text-[10px] text-rose-500 hover:underline font-semibold"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                      <textarea
+                        value={bulkCSVText}
+                        onChange={(e) => handleBulkCSVParse(e.target.value)}
+                        placeholder="Name, Email, Password, Class, Section, Stream&#10;Alice Johnson, alice@school.edu, pass123, 11, MPC, JEE&#10;Bob Smith, bob@school.edu, pass456, 12, BIPC, NEET"
+                        rows={5}
+                        className="w-full text-xs p-3 bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none focus:border-emerald-500 text-slate-950 dark:text-slate-100 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Preview Area */}
+                  <div className="space-y-3 flex flex-col justify-between">
+                    <div className="flex-1">
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase block">Step 2: Preview Logins ({bulkParsedStudents.length} entries parsed)</label>
+                        {bulkParsedStudents.length > 0 && (
+                          <span className="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-450 px-2 py-0.5 rounded font-black font-mono">Ready to Seed</span>
+                        )}
+                      </div>
+
+                      {bulkImportFileError && (
+                        <div className="p-3 bg-rose-50 dark:bg-rose-950/20 border border-rose-300 dark:border-rose-900/40 text-rose-700 dark:text-rose-400 text-xs rounded-xl">
+                          {bulkImportFileError}
+                        </div>
+                      )}
+
+                      {bulkImportResult && (
+                        <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/30 text-emerald-800 dark:text-emerald-300 space-y-2">
+                          <p className="font-bold text-xxs uppercase tracking-wider">🚀 Seed Execution Completed Successfully!</p>
+                          <p className="font-mono text-xs">● Created: {bulkImportResult.count} student logins</p>
+                          {bulkImportResult.errors && bulkImportResult.errors.length > 0 && (
+                            <div className="pt-2 border-t border-emerald-200/50 dark:border-emerald-900/30 text-[10px] text-slate-500 dark:text-slate-400 max-h-24 overflow-y-auto font-mono space-y-1">
+                              <p className="font-bold text-rose-500">Omits & Failures:</p>
+                              {bulkImportResult.errors.map((err, i) => (
+                                <p key={i}>⚠️ {err}</p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {bulkParsedStudents.length > 0 ? (
+                        <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden max-h-56 overflow-y-auto">
+                          <table className="w-full text-left border-collapse text-[10px]">
+                            <thead className="bg-slate-50 dark:bg-slate-800 text-slate-400 font-bold uppercase sticky top-0 border-b border-slate-200 dark:border-slate-800">
+                              <tr>
+                                <th className="p-2">Name</th>
+                                <th className="p-2">Email</th>
+                                <th className="p-2">Password</th>
+                                <th className="p-2">Class/Sec/Stream</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-sans text-slate-650 dark:text-slate-350">
+                              {bulkParsedStudents.map((stud, idx) => (
+                                <tr key={idx} className={stud.error ? "bg-rose-50/50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-400" : "hover:bg-slate-50/50 dark:hover:bg-slate-900/30"}>
+                                  <td className="p-2 font-bold">{stud.name}</td>
+                                  <td className="p-2 font-mono">{stud.email}</td>
+                                  <td className="p-2 font-mono">{stud.password}</td>
+                                  <td className="p-2">
+                                    <div>
+                                      {stud.studentClass ? `${stud.studentClass}` : "No Class"}
+                                      {stud.studentSection && ` - ${stud.studentSection}`}
+                                      {stud.studentStream && ` (${stud.studentStream})`}
+                                    </div>
+                                    {stud.error && (
+                                      <p className="text-[9px] font-semibold text-rose-500 mt-0.5">{stud.error}</p>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        !bulkImportResult && (
+                          <div className="border-2 border-dashed border-slate-150 dark:border-slate-800 rounded-2xl p-6 text-center text-slate-400 dark:text-slate-500 italic min-h-[140px] flex items-center justify-center">
+                            No student profiles parsed. Select a CSV template file to preview details.
+                          </div>
+                        )
+                      )}
+                    </div>
+
+                    {/* Step 3 action */}
+                    {bulkParsedStudents.length > 0 && (
+                      <div className="pt-2">
+                        {hasBulkErrors && (
+                          <p className="text-[10px] text-rose-500 font-bold mb-2 text-center">
+                            ⚠️ Cannot import: Please fix the Class, Section, or Stream case-sensitive errors shown in red above.
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          disabled={bulkImportLoading || hasBulkErrors}
+                          onClick={handleBulkImportSubmit}
+                          className={`w-full py-3 text-white font-bold rounded-xl transition text-xs cursor-pointer text-center uppercase tracking-wider shadow-md flex items-center justify-center gap-2 ${
+                            hasBulkErrors
+                              ? "bg-slate-300 dark:bg-slate-800 text-slate-500 cursor-not-allowed"
+                              : "bg-emerald-600 hover:bg-emerald-500"
+                          }`}
+                        >
+                          {bulkImportLoading ? "Registering Students..." : "Commit Seeding & Import Now"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Student Directory Class/Section/Stream filters */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800/80 shadow-sm">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Filter Class</label>
+                <select
+                  value={userDirClassFilter}
+                  onChange={(e) => setUserDirClassFilter(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
+                >
+                  <option value="ALL">All Classes (11th, 12th, etc)</option>
+                  {availableClasses.map((cls) => (
+                    <option key={cls} value={cls}>Class {cls}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Filter Section</label>
+                <select
+                  value={userDirSectionFilter}
+                  onChange={(e) => setUserDirSectionFilter(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
+                >
+                  <option value="ALL">All Sections (MPC, BIPC, CEC, etc)</option>
+                  {availableSections.map((sec) => (
+                    <option key={sec} value={sec}>Section {sec}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Filter Stream/Target</label>
+                <select
+                  value={userDirStreamFilter}
+                  onChange={(e) => setUserDirStreamFilter(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
+                >
+                  <option value="ALL">All Streams (JEE, NEET, EAMCET, etc)</option>
+                  {availableStreams.map((st) => (
+                    <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* USERS INDEX TABLE CARD */}
@@ -2510,6 +3224,7 @@ export default function TeacherDashboard({
                       <tr>
                         <th className="px-6 py-4 font-display">Student Name</th>
                         <th className="px-6 py-4 font-display">Auth Email Anchor</th>
+                        <th className="px-6 py-4 text-center font-display">Class / Section</th>
                         <th className="px-6 py-4 text-center font-display">Coins Wallet</th>
                         <th className="px-6 py-4 text-right font-display">Actions</th>
                       </tr>
@@ -2523,6 +3238,15 @@ export default function TeacherDashboard({
                             </td>
                             <td className="px-6 py-4 font-mono text-xs text-slate-500 dark:text-slate-400">
                               {u.email}
+                            </td>
+                            <td className="px-6 py-4 text-center font-sans">
+                              {u.studentClass ? (
+                                <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 font-semibold text-[10px] rounded text-slate-700 dark:text-slate-300">
+                                  Class {u.studentClass}{u.studentSection && ` - ${u.studentSection}`}{u.studentStream && ` (${u.studentStream})`}
+                                </span>
+                              ) : (
+                                <span className="text-slate-450 italic text-[10px]">General</span>
+                              )}
                             </td>
                             <td className="px-6 py-4 text-center font-mono font-bold text-emerald-600 dark:text-emerald-400">
                               🪙 {u.coins || 0}
@@ -2760,6 +3484,47 @@ export default function TeacherDashboard({
                 />
               </div>
 
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Class</label>
+                  <select
+                    value={createStudentClass}
+                    onChange={(e) => setCreateStudentClass(e.target.value)}
+                    className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
+                  >
+                    <option value="">-- Class --</option>
+                    <option value="11th">11th</option>
+                    <option value="12th">12th</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Section</label>
+                  <select
+                    value={createStudentSection}
+                    onChange={(e) => setCreateStudentSection(e.target.value)}
+                    className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
+                  >
+                    <option value="">-- Section --</option>
+                    <option value="MPC">MPC</option>
+                    <option value="BIPC">BIPC</option>
+                    <option value="CEC">CEC</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Stream/Target</label>
+                  <select
+                    value={createStudentStream}
+                    onChange={(e) => setCreateStudentStream(e.target.value)}
+                    className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
+                  >
+                    <option value="">-- Stream --</option>
+                    <option value="JEE">JEE</option>
+                    <option value="NEET">NEET</option>
+                    <option value="EAMCET">EAMCET</option>
+                  </select>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3 pt-2">
                 <button
                   type="button"
@@ -2828,6 +3593,47 @@ export default function TeacherDashboard({
                   onChange={(e) => setEditPassword(e.target.value)}
                   className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500/50 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
                 />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Class</label>
+                  <select
+                    value={editStudentClass}
+                    onChange={(e) => setEditStudentClass(e.target.value)}
+                    className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500/50 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
+                  >
+                    <option value="">-- Class --</option>
+                    <option value="11th">11th</option>
+                    <option value="12th">12th</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Section</label>
+                  <select
+                    value={editStudentSection}
+                    onChange={(e) => setEditStudentSection(e.target.value)}
+                    className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500/50 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
+                  >
+                    <option value="">-- Section --</option>
+                    <option value="MPC">MPC</option>
+                    <option value="BIPC">BIPC</option>
+                    <option value="CEC">CEC</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Stream/Target</label>
+                  <select
+                    value={editStudentStream}
+                    onChange={(e) => setEditStudentStream(e.target.value)}
+                    className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500/50 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
+                  >
+                    <option value="">-- Stream --</option>
+                    <option value="JEE">JEE</option>
+                    <option value="NEET">NEET</option>
+                    <option value="EAMCET">EAMCET</option>
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3 pt-2">

@@ -8,6 +8,7 @@ import {
   UserProfile, Exam, LeaderboardEntry, ResultSummary, 
   ResultBreakdownItem 
 } from "../types";
+import { QuestionTextRenderer } from "./QuestionTextRenderer";
 
 interface StudentDashboardProps {
   user: UserProfile;
@@ -31,6 +32,11 @@ export default function StudentDashboard({
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [logoutStep1, setLogoutStep1] = useState(false);
   const [logoutStep2, setLogoutStep2] = useState(false);
+
+  // Leaderboard filters
+  const [classFilter, setClassFilter] = useState("All");
+  const [sectionFilter, setSectionFilter] = useState("All");
+  const [streamFilter, setStreamFilter] = useState("All");
 
   // Profile update states
   const [profileName, setProfileName] = useState(user.name);
@@ -150,7 +156,7 @@ export default function StudentDashboard({
     };
 
     eventSource.onerror = (err) => {
-      console.error("[EventSource] Student stream disconnected, monitoring local status stats...", err);
+      console.warn("[EventSource] Student stream disconnected, monitoring local status stats...", err);
       setFirebaseOnline(false);
     };
 
@@ -172,6 +178,29 @@ export default function StudentDashboard({
 
     return () => clearInterval(interval);
   }, [token]);
+
+  // Auto-refresh detailed report card every 10 seconds if grading is in progress
+  useEffect(() => {
+    if (!detailResultExamId || !detailBreakdown || !(detailBreakdown as any).gradingInProgress) {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/student/exam/${detailResultExamId}/result`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setDetailBreakdown(data);
+        }
+      } catch (err) {
+        console.error("Failed to poll result breakdown status:", err);
+      }
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [detailResultExamId, detailBreakdown, token]);
 
   const fetchGlobalStudentData = () => {
     fetchAvailableExams(false);
@@ -362,10 +391,31 @@ export default function StudentDashboard({
 
             {loadingDetail ? (
               <div className="text-center py-12 text-gray-500">Retrieving NLP checking weights & mapping correctness results...</div>
+            ) : detailBreakdown && (detailBreakdown as any).gradingInProgress ? (
+              <div className="text-center py-24 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-8 space-y-6 max-w-md mx-auto shadow-md">
+                <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                <div className="space-y-2">
+                  <h3 className="text-base font-black text-slate-900 dark:text-slate-100 uppercase tracking-wider font-display">Grading in Progress...</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-sans">
+                    Your exam sheet has been submitted successfully and is being graded by our AI evaluator. Your detailed report card will appear here automatically.
+                  </p>
+                </div>
+                <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-800 pt-4">
+                  Auto-refreshing queue status every 10 seconds
+                </div>
+              </div>
             ) : !detailBreakdown ? (
               <div className="text-center py-12 text-slate-400">Failed to render report breakdown details. Try again.</div>
             ) : (
-              <div className="space-y-8">
+              <div className="space-y-8 animate-fade-in">
+                {detailBreakdown.result?.gradingFailed && (
+                  <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 p-4 rounded-xl text-rose-700 dark:text-rose-400 flex items-center gap-3">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse shrink-0"></span>
+                    <p className="font-bold text-xs">
+                      AI Grading Failed - Please contact your teacher to manually grade this assessment.
+                    </p>
+                  </div>
+                )}
                 
                 {/* Score Report Header */}
                 <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800/80 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 shadow-sm">
@@ -434,7 +484,9 @@ export default function StudentDashboard({
                         </div>
 
                         {/* Statement */}
-                        <p className="text-gray-900 dark:text-slate-100 font-medium text-sm whitespace-pre-wrap">{item.questionText}</p>
+                        <div className="text-gray-900 dark:text-slate-100 font-medium text-sm">
+                          <QuestionTextRenderer text={item.questionText || ""} />
+                        </div>
 
                         {/* MCQ choices breakdown */}
                         {item.type === "MCQ" && item.options && (
@@ -707,21 +759,28 @@ export default function StudentDashboard({
                       <div className="text-center py-12 text-slate-400">No active attempts recorded yet. Launch your first exam from the catalog!</div>
                     ) : (
                       historyList.map((res) => (
-                        <div key={res.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                        <div key={res.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 flex justify-between items-center animate-fade-in">
                           <div className="min-w-0 flex-1 pr-4">
                             <span className="font-bold text-slate-800 dark:text-slate-200 block truncate">{res.examTitle}</span>
                             <span className="text-slate-400 mt-0.5 block font-mono text-[10px]">{new Date(res.submittedAt).toLocaleDateString()}</span>
                           </div>
                           
                           <div className="text-right shrink-0">
-                            <span className={`font-mono font-bold block text-xs ${res.passed ? "text-emerald-600" : "text-rose-500"}`}>
-                              {res.score}/{res.maxScore}
-                            </span>
+                            {res.gradingInProgress ? (
+                              <span className="text-[10px] text-amber-500 font-bold flex items-center gap-1 justify-end leading-none mb-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                Grading...
+                              </span>
+                            ) : (
+                              <span className={`font-mono font-bold block text-xs ${res.passed ? "text-emerald-600" : "text-rose-500"}`}>
+                                {res.score}/{res.maxScore}
+                              </span>
+                            )}
                             <button
                               onClick={() => handleViewResultDetails(res.examId || res.id)}
                               className="text-[10px] text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer"
                             >
-                              Check Details
+                              {res.gradingInProgress ? "View Queue" : "Check Details"}
                             </button>
                           </div>
                         </div>
@@ -787,7 +846,7 @@ export default function StudentDashboard({
                     <div className="p-12 text-center text-slate-400">There are no completed records found. Complete an exam session to view results!</div>
                   ) : (
                     historyList.map((res) => (
-                      <div key={res.id} className="p-6 flex justify-between items-center gap-6">
+                      <div key={res.id} className="p-6 flex justify-between items-center gap-6 animate-fade-in">
                         <div className="flex-1 min-w-0">
                           <h3 className="text-sm font-bold text-gray-900 dark:text-slate-100">{res.examTitle}</h3>
                           <p className="text-gray-400 font-semibold font-mono text-[10px] mt-1 flex items-center gap-1.5 text-xxs">
@@ -795,23 +854,56 @@ export default function StudentDashboard({
                           </p>
                         </div>
                         
-                        <div className="text-right shrink-0 space-y-1 bg-slate-50 dark:bg-slate-800 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80">
-                          <span className={`font-mono font-bold block text-sm ${res.passed ? "text-blue-600" : "text-rose-500"}`}>
-                            {res.score}/{res.maxScore} ({res.percentage}%)
-                          </span>
-                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase text-center block ${
-                            res.passed 
-                              ? "bg-blue-50 text-blue-800 dark:bg-blue-950/40" 
-                              : "bg-rose-100 text-rose-800 dark:bg-rose-950/40"
-                          }`}>
-                            {res.passed ? "Passed" : "Failed"}
-                          </span>
-                          <button
-                            onClick={() => handleViewResultDetails(res.examId || res.id)}
-                            className="text-[10px] text-blue-600 font-bold hover:underline lg:block text-right w-full cursor-pointer mt-1"
-                          >
-                            Detailed Report Card
-                          </button>
+                        <div className="text-right shrink-0 space-y-1 bg-slate-50 dark:bg-slate-800 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80 min-w-[120px]">
+                          {res.gradingInProgress ? (
+                            <>
+                              <span className="text-[10px] text-amber-500 font-bold block flex items-center gap-1 justify-end leading-none">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                Grading...
+                              </span>
+                              <span className="text-[8px] uppercase font-bold text-slate-400 block tracking-wider mt-1 text-right">In Queue</span>
+                              <button
+                                onClick={() => handleViewResultDetails(res.examId || res.id)}
+                                className="text-[10px] text-blue-600 font-bold hover:underline block text-right w-full cursor-pointer mt-1"
+                              >
+                                View Queue Status
+                              </button>
+                            </>
+                          ) : res.gradingFailed ? (
+                            <>
+                              <span className="font-mono font-bold block text-sm text-rose-500 leading-none">
+                                0/{res.maxScore}
+                              </span>
+                              <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase text-center block bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400">
+                                Failed
+                              </span>
+                              <button
+                                onClick={() => handleViewResultDetails(res.examId || res.id)}
+                                className="text-[10px] text-blue-600 font-bold hover:underline block text-right w-full cursor-pointer mt-1"
+                              >
+                                View Failure Report
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span className={`font-mono font-bold block text-sm ${res.passed ? "text-blue-600" : "text-rose-500"}`}>
+                                {res.score}/{res.maxScore} ({res.percentage}%)
+                              </span>
+                              <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase text-center block ${
+                                res.passed 
+                                  ? "bg-blue-50 text-blue-800 dark:bg-blue-950/40" 
+                                  : "bg-rose-100 text-rose-800 dark:bg-rose-950/40"
+                              }`}>
+                                {res.passed ? "Passed" : "Failed"}
+                              </span>
+                              <button
+                                onClick={() => handleViewResultDetails(res.examId || res.id)}
+                                className="text-[10px] text-blue-600 font-bold hover:underline lg:block text-right w-full cursor-pointer mt-1"
+                              >
+                                Detailed Report Card
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     ))
@@ -821,64 +913,159 @@ export default function StudentDashboard({
             )}
 
             {/* TAB: LEADERBOARD */}
-            {activeTab === "LEADERBOARD" && (
-              <div className="space-y-8 select-none">
+            {activeTab === "LEADERBOARD" && (() => {
+              const filteredLeaderboard = leaderboard.filter((entry) => {
+                if (classFilter !== "All" && entry.studentClass !== classFilter) return false;
+                if (sectionFilter !== "All" && entry.studentSection !== sectionFilter) return false;
+                if (streamFilter !== "All" && entry.studentStream !== streamFilter) return false;
+                return true;
+              });
+
+              // Re-rank dynamically based on filtered list
+              const sortedAndRankedLeaderboard = [...filteredLeaderboard].map((entry, idx) => ({
+                ...entry,
+                rank: idx + 1
+              }));
+
+              return (
+                <div className="space-y-8 select-none">
+                  {/* Leaderboard Filters Bar */}
+                  <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800/80 shadow-xs flex flex-col md:flex-row gap-3">
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase block mb-1">Filter Class</label>
+                      <select
+                        value={classFilter}
+                        onChange={(e) => setClassFilter(e.target.value)}
+                        className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-slate-200 focus:outline-none"
+                      >
+                        <option value="All">All Classes (11th & 12th)</option>
+                        <option value="11th">11th Class</option>
+                        <option value="12th">12th Class</option>
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase block mb-1">Filter Section</label>
+                      <select
+                        value={sectionFilter}
+                        onChange={(e) => {
+                          setSectionFilter(e.target.value);
+                          setStreamFilter("All");
+                        }}
+                        className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-slate-200 focus:outline-none"
+                      >
+                        <option value="All">All Sections (MPC, BIPC, CEC)</option>
+                        <option value="MPC">MPC</option>
+                        <option value="BIPC">BIPC</option>
+                        <option value="CEC">CEC</option>
+                      </select>
+                    </div>
+                    {(sectionFilter === "MPC" || sectionFilter === "BIPC" || sectionFilter === "All") && (
+                      <div className="flex-1">
+                        <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase block mb-1">Filter Stream</label>
+                        <select
+                          value={streamFilter}
+                          onChange={(e) => setStreamFilter(e.target.value)}
+                          className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-slate-200 focus:outline-none"
+                        >
+                          <option value="All">All Streams</option>
+                          {sectionFilter === "MPC" && (
+                            <>
+                              <option value="JEE">JEE</option>
+                              <option value="EAMCET">EAMCET</option>
+                            </>
+                          )}
+                          {sectionFilter === "BIPC" && (
+                            <>
+                              <option value="NEET">NEET</option>
+                              <option value="EAMCET">EAMCET</option>
+                            </>
+                          )}
+                          {sectionFilter === "All" && (
+                            <>
+                              <option value="JEE">JEE (MPC)</option>
+                              <option value="NEET">NEET (BIPC)</option>
+                              <option value="EAMCET">EAMCET (MPC/BIPC)</option>
+                            </>
+                          )}
+                        </select>
+                      </div>
+                    )}
+                  </div>
                 
                 {/* Visual Top 3 podium header */}
-                {leaderboard.length > 0 && (
+                {sortedAndRankedLeaderboard.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     
                     {/* 2nd Place Card */}
-                    {leaderboard[1] && (
+                    {sortedAndRankedLeaderboard[1] && (
                       <div className="bg-gradient-to-b from-slate-100 to-white dark:from-slate-800/40 dark:to-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-3xl p-6 flex flex-col items-center justify-center text-center relative order-2 md:order-1 mt-0 md:mt-8 shadow-xs">
                         <div className="absolute top-4 left-4 bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border border-slate-300 dark:border-slate-700">2</div>
                         <div className="w-14 h-14 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 rounded-full flex items-center justify-center text-xl font-bold border-4 border-slate-300 dark:border-slate-700 shadow-md">
                           🥈
                         </div>
-                        <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 mt-4 leading-tight">{leaderboard[1].studentName}</h4>
+                        <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 mt-4 leading-tight">{sortedAndRankedLeaderboard[1].studentName}</h4>
                         <p className="text-[10px] text-slate-400 uppercase font-mono tracking-wider font-semibold mt-1">Silver Runner</p>
+                        {sortedAndRankedLeaderboard[1].studentClass && (
+                          <span className="mt-1 text-[9px] font-bold bg-slate-200/50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full uppercase">
+                            {sortedAndRankedLeaderboard[1].studentClass} {sortedAndRankedLeaderboard[1].studentSection} {sortedAndRankedLeaderboard[1].studentStream && `(${sortedAndRankedLeaderboard[1].studentStream})`}
+                          </span>
+                        )}
                         
                         <div className="mt-4 flex flex-col items-center bg-slate-50 dark:bg-slate-950/40 px-4 py-2 rounded-xl border border-slate-100 dark:border-slate-800/60 w-full">
-                          <span className="text-sm font-black text-blue-600 dark:text-blue-400 font-mono">🪙 {leaderboard[1].totalCoins} Coins</span>
-                          <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {leaderboard[1].averagePercentage}%</span>
+                          <span className="text-sm font-black text-blue-600 dark:text-blue-400 font-mono">🪙 {sortedAndRankedLeaderboard[1].totalCoins} Coins</span>
+                          <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {sortedAndRankedLeaderboard[1].averagePercentage}%</span>
                         </div>
                       </div>
                     )}
 
                     {/* 1st Place Card - Main Focus */}
-                    {leaderboard[0] && (
+                    {sortedAndRankedLeaderboard[0] && (
                       <div className="bg-gradient-to-b from-amber-50 to-white dark:from-amber-950/25 dark:to-slate-900 border-2 border-amber-300 dark:border-amber-800/50 rounded-3xl p-8 flex flex-col items-center justify-center text-center relative order-1 md:order-2 shadow-sm shadow-amber-500/5 hover:scale-[1.01] transition-all duration-300">
                         <div className="absolute top-4 left-4 bg-amber-500 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-black border-2 border-white dark:border-slate-900 shadow-md">1</div>
                         <div className="w-18 h-18 bg-amber-100 text-amber-600 dark:bg-amber-900/30 rounded-full flex items-center justify-center text-2xl font-bold border-4 border-amber-400 dark:border-amber-700/60 shadow-md">
                           👑
                         </div>
-                        <h4 className="font-black text-base text-slate-900 dark:text-slate-100 mt-4 leading-tight">{leaderboard[0].studentName}</h4>
+                        <h4 className="font-black text-base text-slate-900 dark:text-slate-100 mt-4 leading-tight">{sortedAndRankedLeaderboard[0].studentName}</h4>
                         <p className="text-[10px] text-amber-600 dark:text-amber-400 uppercase font-mono tracking-widest font-extrabold mt-1">Grand Champion</p>
+                        {sortedAndRankedLeaderboard[0].studentClass && (
+                          <span className="mt-1 text-[9px] font-bold bg-amber-100/40 dark:bg-amber-950/30 text-amber-700 dark:text-amber-450 px-2 py-0.5 rounded-full uppercase">
+                            {sortedAndRankedLeaderboard[0].studentClass} {sortedAndRankedLeaderboard[0].studentSection} {sortedAndRankedLeaderboard[0].studentStream && `(${sortedAndRankedLeaderboard[0].studentStream})`}
+                          </span>
+                        )}
                         
                         <div className="mt-5 flex flex-col items-center bg-amber-500/5 dark:bg-amber-500/10 px-6 py-2.5 rounded-2xl border border-amber-500/10 w-full">
-                          <span className="text-base font-black text-amber-600 dark:text-amber-400 font-mono">🪙 {leaderboard[0].totalCoins} Coins</span>
-                          <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {leaderboard[0].averagePercentage}%</span>
+                          <span className="text-base font-black text-amber-600 dark:text-amber-450 font-mono">🪙 {sortedAndRankedLeaderboard[0].totalCoins} Coins</span>
+                          <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {sortedAndRankedLeaderboard[0].averagePercentage}%</span>
                         </div>
                       </div>
                     )}
 
                     {/* 3rd Place Card */}
-                    {leaderboard[2] && (
+                    {sortedAndRankedLeaderboard[2] && (
                       <div className="bg-gradient-to-b from-amber-50/10 to-white dark:from-amber-950/5 dark:to-slate-900 border border-amber-600/10 dark:border-amber-900/10 rounded-3xl p-6 flex flex-col items-center justify-center text-center relative order-3 mt-0 md:mt-8 shadow-xs">
-                        <div className="absolute top-4 left-4 bg-amber-700/15 text-amber-700 dark:text-amber-400 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border border-amber-600/20 dark:border-amber-900/10">3</div>
-                        <div className="w-14 h-14 bg-amber-600/5 text-amber-700 dark:bg-amber-900/20 rounded-full flex items-center justify-center text-xl font-bold border-4 border-amber-600/20 dark:border-amber-900/20 shadow-md">
+                        <div className="absolute top-4 left-4 bg-amber-700/15 text-amber-700 dark:text-amber-450 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border border-slate-300 dark:border-slate-750">3</div>
+                        <div className="w-14 h-14 bg-amber-600/5 text-amber-705 dark:bg-amber-900/20 rounded-full flex items-center justify-center text-xl font-bold border-4 border-amber-600/20 dark:border-amber-900/20 shadow-md">
                           🥉
                         </div>
-                        <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 mt-4 leading-tight">{leaderboard[2].studentName}</h4>
+                        <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 mt-4 leading-tight">{sortedAndRankedLeaderboard[2].studentName}</h4>
                         <p className="text-[10px] text-slate-400 uppercase font-mono tracking-wider font-semibold mt-1">Bronze Scholar</p>
+                        {sortedAndRankedLeaderboard[2].studentClass && (
+                          <span className="mt-1 text-[9px] font-bold bg-amber-600/10 text-amber-700 border-amber-600/30 dark:bg-amber-700/20 dark:text-amber-450 px-2 py-0.5 rounded-full uppercase">
+                            {sortedAndRankedLeaderboard[2].studentClass} {sortedAndRankedLeaderboard[2].studentSection} {sortedAndRankedLeaderboard[2].studentStream && `(${sortedAndRankedLeaderboard[2].studentStream})`}
+                          </span>
+                        )}
                         
                         <div className="mt-4 flex flex-col items-center bg-slate-50 dark:bg-slate-950/40 px-4 py-2 rounded-xl border border-slate-100 dark:border-slate-800/60 w-full">
-                          <span className="text-sm font-black text-blue-600 dark:text-blue-400 font-mono">🪙 {leaderboard[2].totalCoins} Coins</span>
-                          <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {leaderboard[2].averagePercentage}%</span>
+                          <span className="text-sm font-black text-blue-600 dark:text-blue-400 font-mono">🪙 {sortedAndRankedLeaderboard[2].totalCoins} Coins</span>
+                          <span className="text-[10px] text-slate-400 mt-0.5 font-mono">Accuracy: {sortedAndRankedLeaderboard[2].averagePercentage}%</span>
                         </div>
                       </div>
                     )}
 
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-slate-400 dark:text-slate-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl">
+                    No student records found matching this class/section filter.
                   </div>
                 )}
 
@@ -897,13 +1084,14 @@ export default function StudentDashboard({
                         <tr>
                           <th className="px-6 py-4 text-center w-16">Rank</th>
                           <th className="px-6 py-4">Student Name</th>
+                          <th className="px-6 py-4 text-center">Class / Section</th>
                           <th className="px-6 py-4 text-center">Exams Attempted</th>
                           <th className="px-6 py-4 text-center">Coins Balance</th>
                           <th className="px-6 py-4 text-center">Average Accuracy</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-150 dark:divide-slate-800">
-                        {leaderboard.map((student, idx) => {
+                        {sortedAndRankedLeaderboard.map((student, idx) => {
                           const isTop3 = idx < 3;
                           const isSelf = student.studentId === user.id;
                           const badgeCols = [
@@ -931,6 +1119,15 @@ export default function StudentDashboard({
                                 </span>
                                 {isSelf && <span className="ml-2 px-1.5 py-0.5 rounded text-[8px] uppercase bg-blue-600 text-white font-black font-sans tracking-wide">You</span>}
                               </td>
+                              <td className="px-6 py-4.5 text-center text-slate-600 dark:text-slate-400 font-sans">
+                                {student.studentClass ? (
+                                  <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 font-semibold text-[10px] rounded">
+                                    {student.studentClass} - {student.studentSection} {student.studentStream && `(${student.studentStream})`}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-450 italic text-[10px]">General</span>
+                                )}
+                              </td>
                               <td className="px-6 py-4.5 font-mono text-center text-slate-500 dark:text-slate-400">{student.examsAttempted}</td>
                               <td className="px-6 py-4.5 font-mono font-bold text-center text-blue-600 dark:text-blue-400 text-sm">
                                 🪙 {student.totalCoins}
@@ -949,7 +1146,7 @@ export default function StudentDashboard({
                 </div>
 
               </div>
-            )}
+            ) })()}
 
             {/* TAB: STATISTICS */}
             {activeTab === "STATISTICS" && (
@@ -1214,6 +1411,23 @@ export default function StudentDashboard({
                       className="w-full text-sm p-3.5 bg-slate-100 border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl focus:outline-none text-slate-500 dark:text-slate-400 font-sans font-medium cursor-not-allowed"
                     />
                   </div>
+
+                  {user.studentClass && (
+                    <div className="grid grid-cols-3 gap-3 pt-2">
+                      <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-center shadow-xs">
+                        <p className="text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500">Class</p>
+                        <p className="text-sm font-black text-slate-800 dark:text-slate-100 mt-1">{user.studentClass}</p>
+                      </div>
+                      <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-center shadow-xs">
+                        <p className="text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500">Section</p>
+                        <p className="text-sm font-black text-slate-800 dark:text-slate-100 mt-1">{user.studentSection || "N/A"}</p>
+                      </div>
+                      <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-center shadow-xs">
+                        <p className="text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500">Stream</p>
+                        <p className="text-sm font-black text-slate-800 dark:text-slate-100 mt-1">{user.studentStream || "General"}</p>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="space-y-1.5 opacity-60">
                     <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Password (Managed by Admin)</label>

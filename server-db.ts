@@ -36,7 +36,6 @@ try {
   // safe fallback
 }
 
-const CONFIG_FILE = path.join(process.cwd(), "firebase-applet-config.json");
 let firebaseConfig: any = null;
 let fbApp: any = null;
 let firestoreDb: any = null;
@@ -45,9 +44,21 @@ let firebaseAuth: any = null;
 const ADMIN_EMAIL = "admin@examportal.com";
 const ADMIN_PASSWORD = "Admin@1234";
 
-if (fs.existsSync(CONFIG_FILE)) {
+try {
+  firebaseConfig = require("./firebase-applet-config.json");
+} catch (e) {
+  const CONFIG_FILE = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(CONFIG_FILE)) {
+    try {
+      firebaseConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    } catch (err) {
+      console.error("Failed to read local firebase config:", err);
+    }
+  }
+}
+
+if (firebaseConfig) {
   try {
-    firebaseConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
     fbApp = initializeApp(firebaseConfig);
     const dbId = firebaseConfig.firestoreDatabaseId;
     firestoreDb = dbId ? fstore.getFirestore(fbApp, dbId) : fstore.getFirestore(fbApp);
@@ -89,6 +100,9 @@ export interface User {
   role: "teacher" | "student" | "admin";
   coins: number;
   createdAt: string;
+  studentClass?: string;
+  studentSection?: string;
+  studentStream?: string;
 }
 
 export interface Exam {
@@ -101,6 +115,9 @@ export interface Exam {
   createdAt: string;
   publishAt?: string;
   isDeleted?: boolean;
+  examClass?: string;
+  examSection?: string;
+  examStream?: string;
 }
 
 export interface Question {
@@ -161,6 +178,7 @@ export interface Result {
   submittedAt: string;
   examTitle?: string;
   examSubject?: string;
+  gradingFailed?: boolean;
 }
 
 export interface MonitoringLog {
@@ -992,9 +1010,33 @@ export class Database {
             exam.subject = "General";
             migrated = true;
           }
+          if (exam.examClass === "12") {
+            exam.examClass = "12th";
+            migrated = true;
+          } else if (exam.examClass === "11") {
+            exam.examClass = "11th";
+            migrated = true;
+          }
         });
       }
-      if (migrated || adminsAdded || passwordsMigrated) {
+
+      // Auto-migrate student class strings like "12" to "12th" and "11" to "11th"
+      let classesMigrated = false;
+      if (db.users && Array.isArray(db.users)) {
+        db.users.forEach((u) => {
+          if (u.role === "student") {
+            if (u.studentClass === "12") {
+              u.studentClass = "12th";
+              classesMigrated = true;
+            } else if (u.studentClass === "11") {
+              u.studentClass = "11th";
+              classesMigrated = true;
+            }
+          }
+        });
+      }
+
+      if (migrated || adminsAdded || passwordsMigrated || classesMigrated) {
         fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
       }
       
@@ -1051,7 +1093,7 @@ export class Database {
     return this.getUsers().find((u) => u.email.trim().toLowerCase() === cleanEmail);
   }
 
-  public static createUser(name: string, email: string, passwordHash: string, role: "teacher" | "student" | "admin"): User {
+  public static createUser(name: string, email: string, passwordHash: string, role: "teacher" | "student" | "admin", studentClass?: string, studentSection?: string, studentStream?: string): User {
     const db = this.load();
     const isHashed = passwordHash.startsWith("$2a$") || passwordHash.startsWith("$2b$") || passwordHash.startsWith("$2y$");
     const hashedPassword = isHashed ? passwordHash : bcrypt.hashSync(passwordHash, 10);
@@ -1063,6 +1105,9 @@ export class Database {
       role,
       coins: 0,
       createdAt: new Date().toISOString(),
+      studentClass,
+      studentSection,
+      studentStream,
     };
     db.users.push(newUser);
     this.save(db, "users", newUser);
@@ -1091,7 +1136,7 @@ export class Database {
     return undefined;
   }
 
-  public static updateUserByAdmin(id: string, name: string, email: string, role: "student" | "teacher" | "admin", passwordHash?: string): User | undefined {
+  public static updateUserByAdmin(id: string, name: string, email: string, role: "student" | "teacher" | "admin", passwordHash?: string, studentClass?: string, studentSection?: string, studentStream?: string): User | undefined {
     const db = this.load();
     const idx = db.users.findIndex((u) => u.id === id);
     if (idx !== -1) {
@@ -1103,6 +1148,9 @@ export class Database {
       db.users[idx].name = name;
       db.users[idx].email = cleanEmail;
       db.users[idx].role = role;
+      if (studentClass !== undefined) db.users[idx].studentClass = studentClass;
+      if (studentSection !== undefined) db.users[idx].studentSection = studentSection;
+      if (studentStream !== undefined) db.users[idx].studentStream = studentStream;
       if (passwordHash) {
         const isHashed = passwordHash.startsWith("$2a$") || passwordHash.startsWith("$2b$") || passwordHash.startsWith("$2y$");
         db.users[idx].passwordHash = isHashed ? passwordHash : bcrypt.hashSync(passwordHash, 10);
@@ -1558,7 +1606,19 @@ Returned output must be a root JSON object containing a structured array with th
         return parsed.grades;
       }
       throw new Error("Invalid schema structure returned from Gemini API");
-    } catch (error) {
+    } catch (error: any) {
+      const isRateLimit = error && (
+        error.status === 429 ||
+        error.statusCode === 429 ||
+        String(error.message || "").toLowerCase().includes("429") ||
+        String(error.message || "").toLowerCase().includes("resource_exhausted") ||
+        String(error.message || "").toLowerCase().includes("rate limit") ||
+        String(error.message || "").toLowerCase().includes("quota")
+      );
+      if (isRateLimit) {
+        throw error;
+      }
+
       console.error("Gemini batch grading failed, running secure fallback:", error);
       // Clean fail-safe fallback: no manual keywords loops, tokenizers, regex, or manual calculations
       return sheet.map((item) => {
@@ -2010,7 +2070,10 @@ Returned output must be a root JSON object containing a structured array with th
         totalCoins: std.coins,
         averagePercentage,
         examsAttempted: studentResults.length,
-        rank: 0 // Will assign below
+        rank: 0, // Will assign below
+        studentClass: std.studentClass,
+        studentSection: std.studentSection,
+        studentStream: std.studentStream
       };
     });
 
@@ -2123,19 +2186,46 @@ Returned output must be a root JSON object containing a structured array with th
     const examsAttempted = results.length;
     const totalCoins = student.coins;
     
-    const performanceSummary = results.map((r) => {
-      const exam = db.exams.find((e) => e.id === r.examId);
+    // Find completed sessions that are not yet graded (do not have a result record yet)
+    const pendingSessions = db.examSessions.filter(
+      (s) => s.studentId === studentId && (s.status === "SUBMITTED" || s.status === "EXPIRED") && !results.some(r => r.sessionId === s.id)
+    );
+
+    const pendingSummary = pendingSessions.map((s) => {
+      const exam = db.exams.find((e) => e.id === s.examId);
       return {
-        id: r.id,
-        examId: r.examId,
-        examTitle: exam ? exam.title : (r.examTitle || "Exam"),
-        score: r.score,
-        maxScore: r.maxScore,
-        percentage: r.percentage,
-        passed: r.passed,
-        submittedAt: r.submittedAt
+        id: `pending-${s.id}`,
+        examId: s.examId,
+        examTitle: exam ? exam.title : "Exam",
+        score: 0,
+        maxScore: 0,
+        percentage: 0,
+        passed: false,
+        coinsEarned: 0,
+        submittedAt: s.lastActivityAt || new Date().toISOString(),
+        gradingInProgress: true
       };
-    }).sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+    });
+
+    const performanceSummary = [
+      ...results.map((r) => {
+        const exam = db.exams.find((e) => e.id === r.examId);
+        return {
+          id: r.id,
+          examId: r.examId,
+          examTitle: exam ? exam.title : (r.examTitle || "Exam"),
+          score: r.score,
+          maxScore: r.maxScore,
+          percentage: r.percentage,
+          passed: r.passed,
+          coinsEarned: r.coinsEarned,
+          submittedAt: r.submittedAt,
+          gradingInProgress: false,
+          gradingFailed: r.gradingFailed
+        };
+      }),
+      ...pendingSummary
+    ].sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
 
     return {
       coinsEarned: totalCoins,
@@ -2143,6 +2233,99 @@ Returned output must be a root JSON object containing a structured array with th
       examsAttempted,
       performanceSummary
     };
+  }
+
+  public static markGradingFailed(studentId: string, examId: string): void {
+    const db = this.load();
+    const session = db.examSessions.find((s) => s.studentId === studentId && s.examId === examId);
+    if (!session) return;
+
+    session.status = "SUBMITTED";
+    session.lastActivityAt = new Date().toISOString();
+
+    const questions = db.questions.filter((q) => q.examId === examId);
+    const maxScore = questions.length;
+
+    questions.forEach((q) => {
+      const studentAnsIdx = db.studentAnswers.findIndex(
+        (a) => a.sessionId === session.id && a.questionId === q.id
+      );
+      if (studentAnsIdx !== -1) {
+        db.studentAnswers[studentAnsIdx].aiScore = 0;
+        db.studentAnswers[studentAnsIdx].aiFeedback = "Grading Failed - Please contact teacher";
+        db.studentAnswers[studentAnsIdx].aiIsCorrect = false;
+        db.studentAnswers[studentAnsIdx].updatedAt = new Date().toISOString();
+      } else {
+        const blankAns = {
+          id: "ans-" + Math.random().toString(36).substring(2, 11),
+          sessionId: session.id,
+          studentId,
+          examId,
+          questionId: q.id,
+          answerText: "",
+          isMarkedForReview: false,
+          updatedAt: new Date().toISOString(),
+          aiScore: 0,
+          aiFeedback: "Grading Failed - Please contact teacher",
+          aiIsCorrect: false
+        };
+        db.studentAnswers.push(blankAns);
+      }
+    });
+
+    const examItem = db.exams.find((e) => e.id === examId);
+    const examTitle = examItem ? examItem.title : "Exam";
+    const examSubject = examItem ? (examItem.subject || "General") : "General";
+
+    const newResult: Result = {
+      id: `res-${session.id}`,
+      sessionId: session.id,
+      studentId,
+      examId,
+      score: 0,
+      maxScore,
+      percentage: 0,
+      coinsEarned: 0,
+      passed: false,
+      submittedAt: new Date().toISOString(),
+      examTitle,
+      examSubject,
+      gradingFailed: true
+    };
+
+    db.results = db.results.filter((r) => r.sessionId !== session.id);
+    db.results.push(newResult);
+
+    const finalLog = {
+      id: "log-" + Math.random().toString(36).substring(2, 11),
+      sessionId: session.id,
+      studentId,
+      examId,
+      eventType: "SUBMIT" as const,
+      details: "AI grading failed permanently after multiple retries. Result score set to 0. Error feedback registered.",
+      timestamp: new Date().toISOString()
+    };
+    db.monitoringLogs.push(finalLog);
+
+    this.save(db, "examSessions");
+    this.save(db, "results", newResult);
+    this.save(db, "monitoringLogs", finalLog);
+
+    const sessAnswers = db.studentAnswers.filter((a) => a.sessionId === session.id);
+    this.save(db, "studentAnswers", sessAnswers);
+
+    if (firestoreDb) {
+      fstore.setDoc(fstore.doc(firestoreDb, "examSessions", session.id), cleanUndefined(session)).catch(() => {});
+      fstore.setDoc(fstore.doc(firestoreDb, "results", newResult.id), cleanUndefined(newResult)).catch(() => {});
+      fstore.setDoc(fstore.doc(firestoreDb, "monitoringLogs", finalLog.id), cleanUndefined(finalLog)).catch(() => {});
+      
+      for (const ans of sessAnswers) {
+        fstore.setDoc(fstore.doc(firestoreDb, "studentAnswers", ans.id), cleanUndefined(ans)).catch(() => {});
+      }
+    }
+
+    this.notifyDbChanged("examSessions");
+    this.notifyDbChanged("results");
   }
 
   public static async closeSessionImmediately(studentId: string, examId: string, isTimerExpired: boolean = false): Promise<any> {

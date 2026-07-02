@@ -4,6 +4,9 @@ export interface UserProfile {
   email: string;
   role: "teacher" | "student" | "admin";
   coins: number;
+  studentClass?: string;
+  studentSection?: string;
+  studentStream?: string;
 }
 
 export interface Exam {
@@ -16,6 +19,9 @@ export interface Exam {
   createdAt: string;
   publishAt?: string; // Optional schedule for publishing
   isDeleted?: boolean;
+  examClass?: string;
+  examSection?: string;
+  examStream?: string;
 }
 
 export type QuestionType = "MCQ" | "SHORT" | "LONG";
@@ -66,6 +72,8 @@ export interface ResultSummary {
   passed: boolean;
   coinsEarned: number;
   submittedAt: string;
+  gradingInProgress?: boolean;
+  gradingFailed?: boolean;
 }
 
 export interface LeaderboardEntry {
@@ -76,6 +84,9 @@ export interface LeaderboardEntry {
   averagePercentage: number;
   examsAttempted: number;
   rank: number;
+  studentClass?: string;
+  studentSection?: string;
+  studentStream?: string;
 }
 
 export interface TeacherGlobalStats {

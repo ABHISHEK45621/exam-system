@@ -4,6 +4,7 @@ import {
   Check, Save, Eye, ShieldAlert, Sparkles 
 } from "lucide-react";
 import { Question, ExamSession, SavedAnswer } from "../types";
+import { QuestionTextRenderer } from "./QuestionTextRenderer";
 
 function xorshift(seedStr: string) {
   let h = 0;
@@ -567,7 +568,7 @@ export default function ActiveExamView({ examId, token, onFinished, onLogout }: 
       setShowSubmitConfirm(false);
       setNotification({
         title: "Exam Submitted!",
-        message: "Exam submitted! Results will be ready in a few minutes.",
+        message: "Exam submitted successfully! Your results will appear in your history within a few minutes.",
         onAction: () => {
           if (document.fullscreenElement) {
             document.exitFullscreen().catch(() => {});
@@ -604,7 +605,7 @@ export default function ActiveExamView({ examId, token, onFinished, onLogout }: 
 
       setNotification({
         title: "Time Limit Expired!",
-        message: "Your Answers had to be compiled and submitted automatically. Exam submitted! Results will be ready in a few minutes. (Note: 1 coin penalty has been assessed for late submission)",
+        message: "Your Answers had to be compiled and submitted automatically. Exam submitted successfully! Your results will appear in your history within a few minutes. (Note: 1 coin penalty has been assessed for late submission)",
         onAction: () => {
           if (document.fullscreenElement) {
             document.exitFullscreen().catch(() => {});
@@ -879,9 +880,9 @@ export default function ActiveExamView({ examId, token, onFinished, onLogout }: 
               </div>
 
               {/* Question Text styling */}
-              <h2 className="text-lg md:text-xl font-medium leading-relaxed text-slate-900 dark:text-slate-100 mb-8 whitespace-pre-wrap">
-                {currentQuestion?.questionText}
-              </h2>
+              <div className="text-lg md:text-xl font-medium leading-relaxed text-slate-900 dark:text-slate-100 mb-8">
+                <QuestionTextRenderer text={currentQuestion?.questionText || ""} />
+              </div>
 
               {/* Answer Canvas Container */}
               <div className="my-6">
@@ -1084,19 +1085,7 @@ export default function ActiveExamView({ examId, token, onFinished, onLogout }: 
               </div>
             </div>
 
-            {/* Quick exit block */}
-            <div className="mt-8 pt-4 border-t border-slate-200 dark:border-slate-800/80">
-              <p className="text-xxs text-slate-400 dark:text-slate-500 leading-normal mb-3 font-mono">
-                Autosave synchronizes answers automatically onto secure Cloud Run containers. Connection drops auto-recover from where you left off.
-              </p>
-              
-              <button 
-                onClick={() => setShowLeaveConfirm(true)}
-                className="w-full text-center text-xs py-2 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 font-medium rounded-lg cursor-pointer"
-              >
-                Save and Return to Panel
-              </button>
-            </div>
+            {/* Quick exit block removed per teacher request */}
 
           </div>
         </div>
