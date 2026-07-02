@@ -77,6 +77,36 @@ export default function TeacherDashboard({
   const [leaderboardSectionFilter, setLeaderboardSectionFilter] = useState<string>("ALL");
   const [leaderboardStreamFilter, setLeaderboardStreamFilter] = useState<string>("ALL");
 
+  // Reset filters when leaving LEADERBOARD or USERS_DIR (Manage Students) tabs
+  useEffect(() => {
+    if (activeTab !== "LEADERBOARD") {
+      setLeaderboardClassFilter("ALL");
+      setLeaderboardSectionFilter("ALL");
+      setLeaderboardStreamFilter("ALL");
+    }
+    if (activeTab !== "USERS_DIR") {
+      setUserDirClassFilter("ALL");
+      setUserDirSectionFilter("ALL");
+      setUserDirStreamFilter("ALL");
+    }
+  }, [activeTab]);
+
+  const isStreamCompatibleWithSection = (stream: string, section: string): boolean => {
+    if (!section || section.toUpperCase() === "ALL" || section === "") return true;
+    const sUpper = stream.toUpperCase();
+    const secUpper = section.toUpperCase();
+    if (secUpper === "MPC") {
+      return sUpper === "ALL" || sUpper === "JEE" || sUpper === "EAMCET" || sUpper === "";
+    }
+    if (secUpper === "BIPC") {
+      return sUpper === "ALL" || sUpper === "NEET" || sUpper === "EAMCET" || sUpper === "";
+    }
+    if (secUpper === "CEC") {
+      return sUpper === "ALL" || sUpper === "";
+    }
+    return true;
+  };
+
   // New Student registration Class, Section, Stream details
   const [createStudentClass, setCreateStudentClass] = useState("");
   const [createStudentSection, setCreateStudentSection] = useState("");
@@ -1635,7 +1665,13 @@ export default function TeacherDashboard({
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Target Section (Optional)</label>
                   <select
                     value={newExamSection}
-                    onChange={(e) => setNewExamSection(e.target.value)}
+                    onChange={(e) => {
+                      const sec = e.target.value;
+                      setNewExamSection(sec);
+                      if (!isStreamCompatibleWithSection(newExamStream, sec)) {
+                        setNewExamStream("All");
+                      }
+                    }}
                     className="w-full text-sm p-4 bg-white border border-gray-200 focus:border-emerald-500 dark:bg-slate-900 dark:border-slate-800 dark:focus:border-emerald-600 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
                   >
                     <option value="All">All Sections (MPC, BIPC, CEC)</option>
@@ -1651,10 +1687,10 @@ export default function TeacherDashboard({
                     onChange={(e) => setNewExamStream(e.target.value)}
                     className="w-full text-sm p-4 bg-white border border-gray-200 focus:border-emerald-500 dark:bg-slate-900 dark:border-slate-800 dark:focus:border-emerald-600 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
                   >
-                    <option value="All">All Streams (JEE, NEET, EAMCET)</option>
-                    <option value="JEE">JEE</option>
-                    <option value="NEET">NEET</option>
-                    <option value="EAMCET">EAMCET</option>
+                    <option value="All">All Streams</option>
+                    {isStreamCompatibleWithSection("JEE", newExamSection) && <option value="JEE">JEE</option>}
+                    {isStreamCompatibleWithSection("NEET", newExamSection) && <option value="NEET">NEET</option>}
+                    {isStreamCompatibleWithSection("EAMCET", newExamSection) && <option value="EAMCET">EAMCET</option>}
                   </select>
                 </div>
               </div>
@@ -2103,7 +2139,13 @@ export default function TeacherDashboard({
                                     <select 
                                       className="p-2 border border-gray-200 dark:border-slate-750 bg-gray-50 dark:bg-slate-950 text-xs block rounded focus:outline-none text-slate-900 dark:text-slate-100 font-sans flex-1"
                                       value={editExamSection}
-                                      onChange={(e) => setEditExamSection(e.target.value)}
+                                      onChange={(e) => {
+                                        const sec = e.target.value;
+                                        setEditExamSection(sec);
+                                        if (!isStreamCompatibleWithSection(editExamStream, sec)) {
+                                          setEditExamStream("All");
+                                        }
+                                      }}
                                     >
                                       <option value="All">All Sections</option>
                                       <option value="MPC">MPC</option>
@@ -2116,9 +2158,9 @@ export default function TeacherDashboard({
                                       onChange={(e) => setEditExamStream(e.target.value)}
                                     >
                                       <option value="All">All Streams</option>
-                                      <option value="JEE">JEE</option>
-                                      <option value="NEET">NEET</option>
-                                      <option value="EAMCET">EAMCET</option>
+                                      {isStreamCompatibleWithSection("JEE", editExamSection) && <option value="JEE">JEE</option>}
+                                      {isStreamCompatibleWithSection("NEET", editExamSection) && <option value="NEET">NEET</option>}
+                                      {isStreamCompatibleWithSection("EAMCET", editExamSection) && <option value="EAMCET">EAMCET</option>}
                                     </select>
                                   </div>
                                   <textarea 
@@ -2734,7 +2776,13 @@ export default function TeacherDashboard({
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Filter Section</label>
                 <select
                   value={leaderboardSectionFilter}
-                  onChange={(e) => setLeaderboardSectionFilter(e.target.value)}
+                  onChange={(e) => {
+                    const sec = e.target.value;
+                    setLeaderboardSectionFilter(sec);
+                    if (!isStreamCompatibleWithSection(leaderboardStreamFilter, sec)) {
+                      setLeaderboardStreamFilter("ALL");
+                    }
+                  }}
                   className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
                 >
                   <option value="ALL">All Sections (MPC, BIPC, CEC, etc)</option>
@@ -2751,7 +2799,7 @@ export default function TeacherDashboard({
                   className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
                 >
                   <option value="ALL">All Streams (JEE, NEET, EAMCET, etc)</option>
-                  {availableStreams.map((st) => (
+                  {availableStreams.filter((st) => isStreamCompatibleWithSection(st, leaderboardSectionFilter)).map((st) => (
                     <option key={st} value={st}>{st}</option>
                   ))}
                 </select>
@@ -3173,7 +3221,13 @@ export default function TeacherDashboard({
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Filter Section</label>
                 <select
                   value={userDirSectionFilter}
-                  onChange={(e) => setUserDirSectionFilter(e.target.value)}
+                  onChange={(e) => {
+                    const sec = e.target.value;
+                    setUserDirSectionFilter(sec);
+                    if (!isStreamCompatibleWithSection(userDirStreamFilter, sec)) {
+                      setUserDirStreamFilter("ALL");
+                    }
+                  }}
                   className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
                 >
                   <option value="ALL">All Sections (MPC, BIPC, CEC, etc)</option>
@@ -3190,7 +3244,7 @@ export default function TeacherDashboard({
                   className="w-full text-xs p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-850 dark:text-slate-200"
                 >
                   <option value="ALL">All Streams (JEE, NEET, EAMCET, etc)</option>
-                  {availableStreams.map((st) => (
+                  {availableStreams.filter((st) => isStreamCompatibleWithSection(st, userDirSectionFilter)).map((st) => (
                     <option key={st} value={st}>{st}</option>
                   ))}
                 </select>
@@ -3501,7 +3555,13 @@ export default function TeacherDashboard({
                   <label className="text-[10px] font-bold text-slate-400 uppercase block">Section</label>
                   <select
                     value={createStudentSection}
-                    onChange={(e) => setCreateStudentSection(e.target.value)}
+                    onChange={(e) => {
+                      const sec = e.target.value;
+                      setCreateStudentSection(sec);
+                      if (!isStreamCompatibleWithSection(createStudentStream, sec)) {
+                        setCreateStudentStream("");
+                      }
+                    }}
                     className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
                   >
                     <option value="">-- Section --</option>
@@ -3518,9 +3578,9 @@ export default function TeacherDashboard({
                     className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
                   >
                     <option value="">-- Stream --</option>
-                    <option value="JEE">JEE</option>
-                    <option value="NEET">NEET</option>
-                    <option value="EAMCET">EAMCET</option>
+                    {isStreamCompatibleWithSection("JEE", createStudentSection) && <option value="JEE">JEE</option>}
+                    {isStreamCompatibleWithSection("NEET", createStudentSection) && <option value="NEET">NEET</option>}
+                    {isStreamCompatibleWithSection("EAMCET", createStudentSection) && <option value="EAMCET">EAMCET</option>}
                   </select>
                 </div>
               </div>
@@ -3612,7 +3672,13 @@ export default function TeacherDashboard({
                   <label className="text-[10px] font-bold text-slate-400 uppercase block">Section</label>
                   <select
                     value={editStudentSection}
-                    onChange={(e) => setEditStudentSection(e.target.value)}
+                    onChange={(e) => {
+                      const sec = e.target.value;
+                      setEditStudentSection(sec);
+                      if (!isStreamCompatibleWithSection(editStudentStream, sec)) {
+                        setEditStudentStream("");
+                      }
+                    }}
                     className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500/50 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
                   >
                     <option value="">-- Section --</option>
@@ -3629,9 +3695,9 @@ export default function TeacherDashboard({
                     className="w-full text-xs p-3 bg-slate-50 border border-slate-200 focus:border-emerald-500/50 dark:bg-slate-950 dark:border-slate-800 rounded-xl focus:outline-none text-slate-900 dark:text-slate-100 font-sans"
                   >
                     <option value="">-- Stream --</option>
-                    <option value="JEE">JEE</option>
-                    <option value="NEET">NEET</option>
-                    <option value="EAMCET">EAMCET</option>
+                    {isStreamCompatibleWithSection("JEE", editStudentSection) && <option value="JEE">JEE</option>}
+                    {isStreamCompatibleWithSection("NEET", editStudentSection) && <option value="NEET">NEET</option>}
+                    {isStreamCompatibleWithSection("EAMCET", editStudentSection) && <option value="EAMCET">EAMCET</option>}
                   </select>
                 </div>
               </div>

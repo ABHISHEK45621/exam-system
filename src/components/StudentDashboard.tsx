@@ -38,6 +38,15 @@ export default function StudentDashboard({
   const [sectionFilter, setSectionFilter] = useState("All");
   const [streamFilter, setStreamFilter] = useState("All");
 
+  // Reset filters when leaving LEADERBOARD tab
+  useEffect(() => {
+    if (activeTab !== "LEADERBOARD") {
+      setClassFilter("All");
+      setSectionFilter("All");
+      setStreamFilter("All");
+    }
+  }, [activeTab]);
+
   // Profile update states
   const [profileName, setProfileName] = useState(user.name);
   const [profileEmail, setProfileEmail] = useState(user.email);
